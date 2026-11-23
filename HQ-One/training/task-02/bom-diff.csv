@@ -1,0 +1,10 @@
+action,level,component,description,qty,uom,note
+add,...3,851086002,RELAY 2WE/24VDC/8A,1,PC,CMC order relay
+add,...3,650142.05,Mark sensor,1,PC,CMC mark sensor
+add,...3,851239155,SERVOMOTOR 1KW/1.7NM/5500R/MIN,1,PC,CMC mark move motor -1950M1
+add,...3,851129369,SERVO CONTROLLER I950 2.2KW,1,PC,CMC mark move
+add,...3,851060083,Sensor,4,PC,CMC position limits
+add,...3,266517963,Motor protection 4.5-6.3A,1,PC,vacuum
+add,...3,851270355,Vacuum motor,1,PC,vacuum
+add,...3,851150913,CABLE JZ-500 4G1.5,1,PC,vacuum
+add,...3,851150910,CABLE JZ-500 3G1.5,1,PC,outfeed vacuum

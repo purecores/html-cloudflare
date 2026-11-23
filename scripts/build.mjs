@@ -76,30 +76,37 @@ function pageSort(a, b) {
   return a.localeCompare(b, 'zh-CN');
 }
 
-async function copyTree(from, to, { skipMarkdown = true } = {}) {
+async function copyTree(from, to) {
   await fsp.mkdir(to, { recursive: true });
   const entries = await fsp.readdir(from, { withFileTypes: true });
   for (const entry of entries) {
     if (entry.name === 'node_modules' || entry.name === '.git') continue;
-    if (entry.isDirectory() && entry.name.toLowerCase() === 'src') continue;
-    if (skipMarkdown && entry.isFile() && /\.(md|markdown)$/i.test(entry.name)) continue;
+    if (entry.isDirectory() && ['src', 'drafts'].includes(entry.name.toLowerCase())) continue;
     if (entry.isFile() && /^(\.DS_Store|Thumbs\.db)$/i.test(entry.name)) continue;
     const source = path.join(from, entry.name);
     const target = path.join(to, entry.name);
     if (entry.isDirectory()) {
-      await copyTree(source, target, { skipMarkdown });
+      await copyTree(source, target);
     } else if (entry.isFile()) {
       await fsp.copyFile(source, target);
     }
   }
 }
 
-async function injectHostStyle(file) {
+async function preparePage(file) {
   let html = await fsp.readFile(file, 'utf8');
-  if (html.includes('data-kb-host-style')) return;
-  const tag = `<style data-kb-host-style>${EMBED_CSS}</style>`;
-  const head = html.search(/<\/head\s*>/i);
-  html = head >= 0 ? html.slice(0, head) + tag + html.slice(head) : tag + html;
+  // Some generated pages point their original-image paths one level above the
+  // knowledge-base folder. In the published layout assets/ and training/ live
+  // inside that folder, so normalise those references in the copied page.
+  html = html.replace(/data-am-src="\.\.\/(assets|training)\//g, 'data-am-src="$1/');
+  // The pages are self-contained (data: images). Allow same-origin originals
+  // referenced by data-am-src so the lightbox can load them; nothing else changes.
+  html = html.replace('img-src data:;', "img-src data: 'self';");
+  if (!html.includes('data-kb-host-style')) {
+    const tag = `<style data-kb-host-style>${EMBED_CSS}</style>`;
+    const head = html.search(/<\/head\s*>/i);
+    html = head >= 0 ? html.slice(0, head) + tag + html.slice(head) : tag + html;
+  }
   await fsp.writeFile(file, html, 'utf8');
 }
 
@@ -237,7 +244,7 @@ export async function build() {
 
   await fsp.rm(tmpDir, { recursive: true, force: true });
   await fsp.mkdir(tmpDir, { recursive: true });
-  await copyTree(siteDir, tmpDir, { skipMarkdown: false });
+  await copyTree(siteDir, tmpDir);
 
   const manifestKbs = [];
   const searchPayloads = new Map();
@@ -315,7 +322,7 @@ export async function build() {
     const docs = [];
     for (const file of files) {
       const copiedFile = path.join(kbDir, file);
-      await injectHostStyle(copiedFile);
+      await preparePage(copiedFile);
       const html = await fsp.readFile(copiedFile, 'utf8');
       const extracted = extractPage(html, file, raw.slug);
       pages.push(extracted.page);

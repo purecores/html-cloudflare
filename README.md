@@ -5,7 +5,7 @@
 当前收录：
 
 - **电机知识库**（`Motor-One/`）：7 卷 + 总览
-- **HQ-One**（`HQ-One/`）：内容筹备中
+- **BHS HQ 横切机**（`HQ-One/`）：电气订单处理，45 篇 + 总览
 
 ## 本地运行
 
@@ -38,7 +38,7 @@ npm run build
 │  ├─ build.mjs          扫描知识库、生成清单与全文索引、输出 dist/
 │  └─ serve.mjs          本地预览 + 自动重建
 ├─ Motor-One/            知识库一：HTML 页面 + src/ 源稿
-├─ HQ-One/               知识库二：目前只有说明文件
+├─ HQ-One/               知识库二：BHS HQ 横切机电气订单处理
 ├─ kbs.json              知识库清单（标题、简介、顺序、状态）
 ├─ wrangler.jsonc        Cloudflare Workers 静态资源配置
 └─ dist/                 构建产物（不提交到 Git）
@@ -126,7 +126,8 @@ npm run deploy
 - **深色模式**：外壳和正文同步切换。知识页原有的主题选择器在发布版里被隐藏，由阅读器的“阅读设置”统一控制明暗和字号。
 - **链接**：知识页之间的相对链接会被阅读器接管，更新侧边栏和网址；外部链接在新标签页打开；没有随知识库发布的页面会提示“这一页没有随知识库一起发布”。
 - **安全头**：`site/_headers` 设置 `X-Frame-Options: SAMEORIGIN` 等响应头；阅读器页面自身还有 CSP。知识页保留它们原有的 CSP。
-- **源稿**：构建只发布 HTML 和旁边的静态资源，`src/` 目录和 Markdown 文件不会被复制到 `dist/`。
+- **源稿**：构建只发布 HTML 和旁边的资源；`src/`、`drafts/` 目录不会复制到 `dist/`。`training/` 里的 PDF、CSV、Markdown 会作为下载资料一起发布。
+- **原图路径**：HQ-One 的 `data-am-src` 原图路径在构建时归一到知识库目录内，并把页面的 `img-src` 放宽到同源，让原图/灯箱可用。
 
 ## 常用命令
 

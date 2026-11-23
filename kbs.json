@@ -19,14 +19,13 @@
     {
       "slug": "hq-one",
       "source": "HQ-One",
-      "title": "HQ-One",
-      "subtitle": "",
-      "description": "HQ 主题的 HTML 知识库。把生成的 HTML 页面放进 HQ-One 文件夹，重新构建后就会出现在这里。",
-      "tags": ["HQ"],
+      "title": "BHS HQ 横切机",
+      "subtitle": "电气订单处理知识库",
+      "description": "从横切机原理、EPLAN 图纸、Beckhoff IO 与 SV 需求，到 BOM、SAP、改图流程和英文图纸表达，覆盖 HQ 订单处理的完整链路。",
+      "tags": ["横切机", "EPLAN", "Beckhoff", "BOM", "SAP"],
       "unit": "篇",
       "accent": "#3f6675",
-      "order": 2,
-      "status": "planned"
+      "order": 2
     }
   ]
 }

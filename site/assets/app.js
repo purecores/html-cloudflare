@@ -575,6 +575,7 @@ function showReader(kb, page, anchor) {
   renderOutline(els.drawerOutline, kb, page);
   renderPageNav(kb, page);
   syncSettingsRawLink();
+  revealActiveChapter(els.chapterList);
 
   document.title = `${pageLabel} · ${kb.title}`;
   saveLast(kb, page);
@@ -639,6 +640,11 @@ function renderOutline(container, kb, page) {
   container.replaceChildren(...items);
   const nav = container.closest('nav');
   if (nav) nav.hidden = sections.length === 0;
+}
+
+function revealActiveChapter(container, { center = false } = {}) {
+  const active = container?.querySelector('a[aria-current="page"]');
+  if (active) active.scrollIntoView({ block: center ? 'center' : 'nearest' });
 }
 
 function renderPageNav(kb, page) {
@@ -862,6 +868,7 @@ function openDrawer() {
     els.menuBtn.setAttribute('aria-expanded', 'true');
     const close = $('[data-close="drawer"]', els.drawer);
     if (close) close.focus();
+    revealActiveChapter(els.drawerChapters, { center: true });
   }
 }
 
