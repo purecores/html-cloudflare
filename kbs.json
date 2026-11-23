@@ -26,6 +26,17 @@
       "unit": "篇",
       "accent": "#3f6675",
       "order": 2
+    },
+    {
+      "slug": "eplan-kb",
+      "source": "EPLAN-KB",
+      "title": "EPLAN 绘图知识库",
+      "subtitle": "HQ 横切机 · AZARIA 234 页图纸案例",
+      "description": "以 AZARIA 项目为案例，从项目输入、图框骨架、页结构与符号，到主回路、PLC/IO、端子电缆、报表 BOM 与输出评审，按实际出图流程整理。",
+      "tags": ["EPLAN", "电气图纸", "BOM", "模板"],
+      "unit": "篇",
+      "accent": "#4c7355",
+      "order": 3
     }
   ]
 }

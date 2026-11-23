@@ -6,7 +6,6 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 
 const THEME_KEY = 'kb-theme';
-const SCALE_KEY = 'kb-scale';
 const LAST_KEY = 'kb-last';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -176,15 +175,6 @@ function readTheme() {
   }
 }
 
-function readScale() {
-  try {
-    const value = Number(localStorage.getItem(SCALE_KEY));
-    return [1, 1.15, 1.3].includes(value) ? value : 1;
-  } catch {
-    return 1;
-  }
-}
-
 function applyTheme(value, { persist = true } = {}) {
   const theme = value === 'light' || value === 'dark' ? value : 'system';
   const meta = document.querySelector('meta[name="color-scheme"]');
@@ -204,32 +194,14 @@ function applyTheme(value, { persist = true } = {}) {
   syncFrameTheme();
 }
 
-function applyScale(value, { persist = true } = {}) {
-  const scale = [1, 1.15, 1.3].includes(Number(value)) ? Number(value) : 1;
-  if (persist) {
-    try {
-      localStorage.setItem(SCALE_KEY, String(scale));
-    } catch {
-      // The selected size still applies for this page.
-    }
-  }
-  for (const radio of $$('input[name="scale"]', els.settingsDialog)) {
-    radio.checked = Number(radio.value) === scale;
-  }
-  syncFrameScale();
-}
-
 function syncFrameTheme() {
   const doc = els.frame.contentDocument;
   if (!doc || !doc.documentElement) return;
   const theme = readTheme();
-  doc.documentElement.setAttribute('data-mode', theme === 'system' ? 'auto' : theme);
-}
-
-function syncFrameScale() {
-  const doc = els.frame.contentDocument;
-  if (!doc || !doc.documentElement) return;
-  doc.documentElement.style.setProperty('--am-scale', String(readScale()));
+  const mode = theme === 'system' ? 'auto' : theme;
+  doc.documentElement.setAttribute('data-mode', mode);
+  const select = doc.querySelector('select[data-am="mode"]');
+  if (select) select.value = mode;
 }
 
 /* --------------------------------------------------------------------------
@@ -239,7 +211,6 @@ function syncFrameScale() {
 async function init() {
   detectPlatform();
   applyTheme(readTheme(), { persist: false });
-  applyScale(readScale(), { persist: false });
   bindStaticEvents();
 
   try {
@@ -588,7 +559,6 @@ function showReader(kb, page, anchor) {
     navigateFrame(page.href);
   } else {
     syncFrameTheme();
-    syncFrameScale();
     if (anchor) scrollToAnchor(anchor);
     else if (previousAnchor || !wasReading) scrollFrameTop();
     else updateOutlineActive(els.frame.contentDocument);
@@ -708,7 +678,6 @@ function handleFrameLoad() {
 
   ensureFrameStyle(doc);
   syncFrameTheme();
-  syncFrameScale();
   bindContentDoc(doc);
   els.loadBar.hidden = true;
 
@@ -725,7 +694,8 @@ function ensureFrameStyle(doc) {
   style.id = 'kb-host-frame-style';
   style.textContent = `
     .kb-target { outline: 2px solid var(--accent, #a34b28); outline-offset: 6px; border-radius: 2px; }
-    .am-toolbar, .am-export, .am-colophon { display: none !important; }
+    .am-export, .am-colophon, .am-reply, .am-reply-bar, .am-remark-hover, .am-remark-pop, .am-comment-btn,
+    [data-am="reply"], [data-am="remark"], [data-am="copy"], [data-am="export"] { display: none !important; }
   `;
   doc.head.append(style);
 }
@@ -895,9 +865,6 @@ function openSettings() {
   if (!els.settingsDialog.open) {
     for (const radio of $$('input[name="theme"]', els.settingsDialog)) {
       radio.checked = radio.value === readTheme();
-    }
-    for (const radio of $$('input[name="scale"]', els.settingsDialog)) {
-      radio.checked = Number(radio.value) === readScale();
     }
     syncSettingsRawLink();
     els.settingsDialog.showModal();
@@ -1271,7 +1238,6 @@ function bindStaticEvents() {
 
   els.settingsDialog.addEventListener('change', (event) => {
     if (event.target.name === 'theme') applyTheme(event.target.value);
-    if (event.target.name === 'scale') applyScale(event.target.value);
   });
 
   els.searchInput.addEventListener('input', () => {
@@ -1326,7 +1292,6 @@ function bindStaticEvents() {
 
   window.addEventListener('storage', (event) => {
     if (event.key === THEME_KEY) applyTheme(readTheme(), { persist: false });
-    if (event.key === SCALE_KEY) applyScale(readScale(), { persist: false });
   });
 
   wideLayout.addEventListener('change', (event) => {

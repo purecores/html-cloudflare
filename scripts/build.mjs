@@ -22,13 +22,10 @@ const NOISE = [
 ].join(',');
 
 const EMBED_CSS = `
-/* Injected by the host build: the shelf owns search, theme and type size. */
-.am-toolbar, .am-export, .am-colophon, .am-reply, .am-reply-bar, .am-remark-hover, .am-remark-pop, .am-comment-btn { display: none !important; }
-.am-doc { padding-top: 34px !important; }
-.am-toc { top: 16px !important; }
-@media (max-width: 760px) {
-  .am-sheet, .am-doc { padding-top: 22px !important; }
-}
+/* Injected by the host build: keep the page's theme / mode / size toolbar,
+   hide only the authoring actions that belong to the generator. */
+.am-export, .am-colophon, .am-reply, .am-reply-bar, .am-remark-hover, .am-remark-pop, .am-comment-btn,
+[data-am="reply"], [data-am="remark"], [data-am="copy"], [data-am="export"] { display: none !important; }
 `;
 
 function log(...args) {
