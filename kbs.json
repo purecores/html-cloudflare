@@ -1,0 +1,32 @@
+{
+  "site": {
+    "title": "知识库",
+    "description": "把 HTML 知识页收进一个书架。按卷阅读，全文检索，在电脑和手机上都能打开。",
+    "repo": "https://github.com/purecores/html-cloudflare"
+  },
+  "kbs": [
+    {
+      "slug": "motor-one",
+      "source": "Motor-One",
+      "title": "电机知识库",
+      "subtitle": "分卷版 · 7 卷 + 总览",
+      "description": "从磁路、能量法与三相坐标出发，穿过本体、功率电子、控制、NVH 与设计成本，最后收进一册速查。",
+      "tags": ["磁路", "控制", "NVH", "设计", "速查"],
+      "unit": "卷",
+      "accent": "#a94f2a",
+      "order": 1
+    },
+    {
+      "slug": "hq-one",
+      "source": "HQ-One",
+      "title": "HQ-One",
+      "subtitle": "",
+      "description": "HQ 主题的 HTML 知识库。把生成的 HTML 页面放进 HQ-One 文件夹，重新构建后就会出现在这里。",
+      "tags": ["HQ"],
+      "unit": "篇",
+      "accent": "#3f6675",
+      "order": 2,
+      "status": "planned"
+    }
+  ]
+}

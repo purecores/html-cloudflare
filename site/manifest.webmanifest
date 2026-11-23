@@ -1,0 +1,19 @@
+{
+  "name": "知识库 · HTML 阅读器",
+  "short_name": "知识库",
+  "description": "把 HTML 知识页收进一个书架。按卷阅读，全文检索，在电脑和手机上都能打开。",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#eef0ed",
+  "theme_color": "#eef0ed",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "assets/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

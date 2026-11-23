@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="color-scheme" content="light dark">
+<script src="assets/theme-init.js"></script>
+<title>知识库 · HTML 阅读器</title>
+<meta name="description" content="把 HTML 知识页收进一个书架。按卷阅读，全文检索，在电脑和手机上都能打开。">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#eef0ed">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0a0e10">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+
+<a class="skip-link" href="#app">跳到内容</a>
+
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.4"/><path d="m16 16 4.6 4.6"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+  <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-8.5 8.5"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></symbol>
+  <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M20 12H5M11 6l-6 6 6 6"/></symbol>
+  <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="M15 5 8 12l7 7"/></symbol>
+  <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+</svg>
+
+<header class="topbar">
+  <button id="menu-btn" class="icon-btn menu-btn" type="button" aria-label="打开章节目录" aria-controls="drawer" aria-expanded="false" hidden>
+    <svg class="icon" aria-hidden="true"><use href="#i-menu"></use></svg>
+  </button>
+
+  <a class="brand" href="#/" aria-label="知识库首页">
+    <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+      <rect x="1" y="1" width="30" height="30" rx="2.5"></rect>
+      <circle cx="16" cy="16" r="7.5"></circle>
+      <circle class="brand-core" cx="16" cy="16" r="2.4"></circle>
+      <path d="M16 5.5v3M16 23.5v3M5.5 16h3M23.5 16h3"></path>
+    </svg>
+    <span class="brand-name">知识库</span>
+    <span class="brand-spec">HTML 阅读器</span>
+  </a>
+
+  <p class="crumb" id="crumb" hidden>
+    <span class="crumb-kb" id="crumb-kb"></span>
+    <span class="crumb-sep" aria-hidden="true">/</span>
+    <span class="crumb-page" id="crumb-page"></span>
+  </p>
+
+  <div class="top-actions">
+    <button id="search-btn" class="search-btn" type="button" aria-label="搜索知识库" aria-haspopup="dialog" aria-controls="search-dialog">
+      <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>
+      <span class="search-label">搜索</span>
+      <kbd data-kbd aria-hidden="true">Ctrl K</kbd>
+    </button>
+    <a id="raw-link" class="icon-btn raw-link" href="#" target="_blank" rel="noopener" aria-label="在新标签页打开原页面" title="打开原页面" hidden>
+      <svg class="icon" aria-hidden="true"><use href="#i-external"></use></svg>
+    </a>
+    <button id="settings-btn" class="icon-btn settings-btn" type="button" aria-label="阅读设置" title="阅读设置" aria-haspopup="dialog" aria-controls="settings-dialog">
+      <span class="aa" aria-hidden="true">Aa</span>
+    </button>
+    <a id="repo-link" class="repo-link" href="https://github.com/purecores/html-cloudflare" target="_blank" rel="noopener">GitHub</a>
+  </div>
+</header>
+
+<noscript>
+  <p class="noscript">这个阅读器需要 JavaScript。你也可以直接打开 <a href="kb/motor-one/index.html">电机知识库总览</a>。</p>
+</noscript>
+
+<main id="app" tabindex="-1">
+  <section id="home-view" class="home" aria-labelledby="hero-title">
+    <div class="hero">
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <p class="hero-kicker">本地 HTML <span aria-hidden="true">·</span> 云端阅读</p>
+          <h1 id="hero-title" class="hero-title">知识库</h1>
+          <p class="hero-lead">把散落的知识页收进一个书架。按卷阅读，全文检索，在电脑和手机上都能打开。</p>
+          <button id="hero-search" class="hero-search" type="button" aria-haspopup="dialog" aria-controls="search-dialog">
+            <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>
+            <span id="hero-search-label">搜索全部内容</span>
+            <kbd data-kbd aria-hidden="true">Ctrl K</kbd>
+          </button>
+          <div class="stats" aria-label="书架概况">
+            <div class="stat"><span class="stat-value" id="stat-kbs">—</span><span class="stat-label">个知识库</span></div>
+            <div class="stat"><span class="stat-value" id="stat-docs">—</span><span class="stat-label">篇文档</span></div>
+            <div class="stat"><span class="stat-value" id="stat-chars">—</span><span class="stat-label">正文字数</span></div>
+          </div>
+        </div>
+
+        <figure class="hero-art" aria-hidden="true">
+          <div class="hero-art-grid"></div>
+          <svg class="stator" viewBox="0 0 560 560">
+            <defs>
+              <g id="slot-mark"><line x1="280" y1="82" x2="280" y2="110"></line></g>
+            </defs>
+            <g class="s-construction">
+              <circle cx="280" cy="280" r="236"></circle>
+              <circle cx="280" cy="280" r="212" class="s-dashed"></circle>
+              <line x1="280" y1="18" x2="280" y2="542" class="s-dashed"></line>
+              <line x1="18" y1="280" x2="542" y2="280" class="s-dashed"></line>
+            </g>
+            <g class="s-rings">
+              <circle cx="280" cy="280" r="198"></circle>
+              <circle cx="280" cy="280" r="156"></circle>
+              <circle cx="280" cy="280" r="58"></circle>
+            </g>
+            <g class="s-slots">
+              <use href="#slot-mark"></use>
+              <use href="#slot-mark" transform="rotate(15 280 280)"></use>
+              <use href="#slot-mark" transform="rotate(30 280 280)"></use>
+              <use href="#slot-mark" transform="rotate(45 280 280)"></use>
+              <use href="#slot-mark" transform="rotate(60 280 280)"></use>
+              <use href="#slot-mark" transform="rotate(75 280 280)"></use>
+              <use href="#slot-mark" transform="rotate(90 280 280)"></use>
+              <use href="#slot-mark" transform="rotate(105 280 280)"></use>
+              <use href="#slot-mark" transform="rotate(120 280 280)"></use>
+              <use href="#slot-mark" transform="rotate(135 280 280)"></use>
+              <use href="#slot-mark" transform="rotate(150 280 280)"></use>
+              <use href="#slot-mark" transform="rotate(165 280 280)"></use>
+              <use href="#slot-mark" transform="rotate(180 280 280)"></use>
+              <use href="#slot-mark" transform="rotate(195 280 280)"></use>
+              <use href="#slot-mark" transform="rotate(210 280 280)"></use>
+              <use href="#slot-mark" transform="rotate(225 280 280)"></use>
+              <use href="#slot-mark" transform="rotate(240 280 280)"></use>
+              <use href="#slot-mark" transform="rotate(255 280 280)"></use>
+              <use href="#slot-mark" transform="rotate(270 280 280)"></use>
+              <use href="#slot-mark" transform="rotate(285 280 280)"></use>
+              <use href="#slot-mark" transform="rotate(300 280 280)"></use>
+              <use href="#slot-mark" transform="rotate(315 280 280)"></use>
+              <use href="#slot-mark" transform="rotate(330 280 280)"></use>
+              <use href="#slot-mark" transform="rotate(345 280 280)"></use>
+            </g>
+            <g class="s-wind">
+              <path class="phase-u" pathLength="1" style="--delay:.10s" d="M280 108 A172 172 0 0 1 452 280"></path>
+              <path class="phase-v" pathLength="1" style="--delay:.24s" d="M452 280 A172 172 0 0 1 280 452"></path>
+              <path class="phase-w" pathLength="1" style="--delay:.38s" d="M280 452 A172 172 0 0 1 108 280"></path>
+              <path class="phase-u s-faint" pathLength="1" style="--delay:.52s" d="M108 280 A172 172 0 0 1 280 108"></path>
+            </g>
+            <g class="s-rotor">
+              <line x1="280" y1="280" x2="280" y2="132"></line>
+              <circle cx="280" cy="132" r="5"></circle>
+              <circle cx="280" cy="280" r="2.5"></circle>
+            </g>
+            <g class="s-labels">
+              <text x="280" y="58" text-anchor="middle">U</text>
+              <text x="482" y="285" text-anchor="middle">V</text>
+              <text x="78" y="285" text-anchor="middle">W</text>
+            </g>
+          </svg>
+          <figcaption><span>三相定子截面</span><span>U / V / W · 示意</span></figcaption>
+        </figure>
+      </div>
+      <div class="ruler" aria-hidden="true"></div>
+    </div>
+
+    <div id="resume" class="resume" hidden></div>
+
+    <section class="shelf" aria-labelledby="shelf-title">
+      <div class="section-head">
+        <h2 id="shelf-title">馆藏</h2>
+        <p id="shelf-note">正在读取书架…</p>
+      </div>
+      <div id="shelf-list" class="shelf-list">
+        <p class="boot">正在读取书架…</p>
+      </div>
+    </section>
+  </section>
+
+  <section id="reader-view" class="reader" hidden>
+    <h1 id="reader-title" class="visually-hidden" tabindex="-1">知识库</h1>
+
+    <aside class="sidebar" aria-label="知识库目录">
+      <div class="side-head">
+        <a class="side-back" href="#/">
+          <svg class="icon" aria-hidden="true"><use href="#i-arrow-left"></use></svg>
+          返回书架
+        </a>
+        <p class="side-kb" id="side-kb"></p>
+        <p class="side-sub" id="side-sub"></p>
+      </div>
+      <nav class="chapter-nav" aria-label="章节">
+        <p class="side-label">目录</p>
+        <ol id="chapter-list" class="chapter-list-side"></ol>
+      </nav>
+      <nav class="outline-nav" aria-label="本页小节">
+        <p class="side-label">本页</p>
+        <ol id="outline-list" class="outline-list"></ol>
+      </nav>
+      <div class="side-foot">
+        <span id="side-chars"></span>
+        <span class="key-hint"><span data-kbd>Ctrl K</span> 搜索</span>
+      </div>
+    </aside>
+
+    <div class="reader-main">
+      <div class="sheet" id="sheet">
+        <div class="load-bar" id="load-bar" hidden></div>
+        <iframe id="content-frame" title="知识库正文" loading="eager"></iframe>
+      </div>
+      <nav class="page-nav" aria-label="翻页">
+        <a id="prev-link" class="page-nav-btn" href="#">
+          <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg>
+          <span class="pn-text"><span class="pn-dir">上一篇</span><span class="pn-title" id="prev-title"></span></span>
+        </a>
+        <span class="page-count" id="page-count"></span>
+        <a id="next-link" class="page-nav-btn pn-next" href="#">
+          <span class="pn-text"><span class="pn-dir">下一篇</span><span class="pn-title" id="next-title"></span></span>
+          <svg class="icon" aria-hidden="true"><use href="#i-chevron-right"></use></svg>
+        </a>
+      </nav>
+    </div>
+  </section>
+</main>
+
+<footer class="site-foot">
+  <p>静态站点，部署在 Cloudflare。内容以 HTML 文件保存在仓库里。</p>
+  <p><a id="footer-repo" href="https://github.com/purecores/html-cloudflare" target="_blank" rel="noopener">GitHub 仓库</a></p>
+</footer>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<dialog id="search-dialog" class="search-dialog" aria-labelledby="search-title" closedby="any">
+  <h2 id="search-title" class="visually-hidden">搜索知识库</h2>
+  <div class="search-box">
+    <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>
+    <input id="search-input" type="search" role="combobox" aria-expanded="true" aria-controls="search-results" aria-autocomplete="list" aria-label="搜索知识库" placeholder="搜索章节、术语或公式名" autocomplete="off" spellcheck="false" enterkeyhint="search">
+    <kbd class="search-esc">Esc</kbd>
+    <button class="icon-btn search-close" type="button" data-close="search-dialog" aria-label="关闭搜索">
+      <svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg>
+    </button>
+  </div>
+  <p id="search-status" class="search-status" aria-live="polite">输入关键词开始搜索</p>
+  <div id="search-results" class="search-results" role="listbox" aria-label="搜索结果"></div>
+  <div class="search-foot">
+    <span><kbd>↑</kbd><kbd>↓</kbd> 选择</span>
+    <span><kbd>↵</kbd> 打开</span>
+    <span><kbd>Esc</kbd> 关闭</span>
+  </div>
+</dialog>
+
+<dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title" closedby="any">
+  <header class="settings-head">
+    <h2 id="settings-title">阅读设置</h2>
+    <button class="icon-btn" type="button" data-close="settings-dialog" aria-label="关闭设置">
+      <svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg>
+    </button>
+  </header>
+  <div class="settings-body">
+    <fieldset>
+      <legend>主题</legend>
+      <div class="segmented">
+        <label><input type="radio" name="theme" value="system"><span>跟随系统</span></label>
+        <label><input type="radio" name="theme" value="light"><span>浅色</span></label>
+        <label><input type="radio" name="theme" value="dark"><span>深色</span></label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>正文字号</legend>
+      <div class="segmented">
+        <label><input type="radio" name="scale" value="1"><span>标准</span></label>
+        <label><input type="radio" name="scale" value="1.15"><span>大</span></label>
+        <label><input type="radio" name="scale" value="1.3"><span>特大</span></label>
+      </div>
+    </fieldset>
+    <p class="settings-note">设置只保存在这台设备上。</p>
+    <div class="settings-links">
+      <a id="settings-raw" class="text-link" href="#" target="_blank" rel="noopener" hidden>打开当前页面原文件</a>
+      <a id="settings-repo" class="text-link" href="https://github.com/purecores/html-cloudflare" target="_blank" rel="noopener">GitHub 仓库</a>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="drawer" class="drawer" aria-labelledby="drawer-title" closedby="any">
+  <header class="drawer-head">
+    <div>
+      <p class="drawer-kicker">目录</p>
+      <h2 id="drawer-title">知识库</h2>
+    </div>
+    <button class="icon-btn" type="button" data-close="drawer" aria-label="关闭目录">
+      <svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg>
+    </button>
+  </header>
+  <div class="drawer-body">
+    <nav aria-label="章节">
+      <ol id="drawer-chapters" class="chapter-list-side drawer-chapters"></ol>
+    </nav>
+    <nav class="drawer-outline-nav" aria-label="本页小节">
+      <p class="side-label">本页</p>
+      <ol id="drawer-outline" class="outline-list"></ol>
+    </nav>
+  </div>
+  <div class="drawer-foot">
+    <a class="side-back" href="#/">
+      <svg class="icon" aria-hidden="true"><use href="#i-arrow-left"></use></svg>
+      返回书架
+    </a>
+    <a class="text-link" id="drawer-repo" href="https://github.com/purecores/html-cloudflare" target="_blank" rel="noopener">GitHub</a>
+  </div>
+</dialog>
+
+<script type="module" src="assets/app.js"></script>
+</body>
+</html>

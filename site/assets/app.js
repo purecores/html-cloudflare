@@ -1,0 +1,1333 @@
+/* ==========================================================================
+   知识库 · HTML 阅读器
+   ========================================================================== */
+
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+
+const THEME_KEY = 'kb-theme';
+const SCALE_KEY = 'kb-scale';
+const LAST_KEY = 'kb-last';
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const wideLayout = window.matchMedia('(min-width: 921px)');
+
+const els = {
+  topbar: $('.topbar'),
+  menuBtn: $('#menu-btn'),
+  crumb: $('#crumb'),
+  crumbKb: $('#crumb-kb'),
+  crumbPage: $('#crumb-page'),
+  searchBtn: $('#search-btn'),
+  heroSearch: $('#hero-search'),
+  heroSearchLabel: $('#hero-search-label'),
+  rawLink: $('#raw-link'),
+  settingsBtn: $('#settings-btn'),
+  repoLink: $('#repo-link'),
+  footerRepo: $('#footer-repo'),
+  home: $('#home-view'),
+  reader: $('#reader-view'),
+  readerTitle: $('#reader-title'),
+  statKbs: $('#stat-kbs'),
+  statDocs: $('#stat-docs'),
+  statChars: $('#stat-chars'),
+  shelfList: $('#shelf-list'),
+  shelfNote: $('#shelf-note'),
+  resume: $('#resume'),
+  sideKb: $('#side-kb'),
+  sideSub: $('#side-sub'),
+  chapterList: $('#chapter-list'),
+  outlineList: $('#outline-list'),
+  sideChars: $('#side-chars'),
+  drawer: $('#drawer'),
+  drawerTitle: $('#drawer-title'),
+  drawerChapters: $('#drawer-chapters'),
+  drawerOutline: $('#drawer-outline'),
+  drawerRepo: $('#drawer-repo'),
+  sheet: $('#sheet'),
+  frame: $('#content-frame'),
+  loadBar: $('#load-bar'),
+  prevLink: $('#prev-link'),
+  prevTitle: $('#prev-title'),
+  pageCount: $('#page-count'),
+  nextLink: $('#next-link'),
+  nextTitle: $('#next-title'),
+  searchDialog: $('#search-dialog'),
+  searchInput: $('#search-input'),
+  searchStatus: $('#search-status'),
+  searchResults: $('#search-results'),
+  settingsDialog: $('#settings-dialog'),
+  settingsRaw: $('#settings-raw'),
+  settingsRepo: $('#settings-repo'),
+  toast: $('#toast'),
+};
+
+let manifest = null;
+let current = { kb: null, page: null, anchor: null };
+let frameHref = null;
+let homeScrollY = 0;
+let toastTimer = 0;
+let activeOutlineKey = '';
+let scrollRaf = 0;
+let hadPage = false;
+
+const searchIndex = new Map();
+const searchPending = new Map();
+let searchLoading = false;
+let searchPromise = null;
+let searchErrorCount = 0;
+let searchQuery = '';
+let searchTimer = 0;
+let searchResults = [];
+let activeResult = -1;
+
+const boundDocs = new WeakSet();
+
+/* --------------------------------------------------------------------------
+   Small DOM helpers
+   -------------------------------------------------------------------------- */
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (value == null || value === false) continue;
+    if (key === 'class') {
+      node.className = value;
+    } else if (key === 'text') {
+      node.textContent = value;
+    } else if (key === 'dataset') {
+      for (const [dataKey, dataValue] of Object.entries(value)) node.dataset[dataKey] = dataValue;
+    } else if (key === 'style') {
+      for (const [styleKey, styleValue] of Object.entries(value)) node.style.setProperty(styleKey, styleValue);
+    } else if (key.startsWith('on') && typeof value === 'function') {
+      node.addEventListener(key.slice(2).toLowerCase(), value);
+    } else {
+      node.setAttribute(key, value === true ? '' : String(value));
+    }
+  }
+  for (const child of children.flat(Infinity)) {
+    if (child == null || child === false) continue;
+    node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+  return node;
+}
+
+function icon(name, className = 'icon') {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('class', className);
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS(SVG_NS, 'use');
+  use.setAttribute('href', `#${name}`);
+  svg.append(use);
+  return svg;
+}
+
+function safeDecode(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function formatChars(value) {
+  const n = Number(value) || 0;
+  if (n >= 10000) {
+    return `${(n / 10000).toFixed(1).replace(/\.0$/, '')} 万字`;
+  }
+  return `${n} 字`;
+}
+
+function formatCompact(value) {
+  const n = Number(value) || 0;
+  if (n >= 10000) return `${(n / 10000).toFixed(1).replace(/\.0$/, '')} 万`;
+  return String(n);
+}
+
+function hrefFor(kb, page, anchor = '') {
+  const base = `#/kb/${encodeURIComponent(kb.slug)}/${encodeURIComponent(page.id)}`;
+  return anchor ? `${base}/${encodeURIComponent(anchor)}` : base;
+}
+
+function showToast(message) {
+  if (!message) return;
+  els.toast.textContent = message;
+  els.toast.classList.add('is-visible');
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => {
+    els.toast.classList.remove('is-visible');
+  }, 3400);
+}
+
+/* --------------------------------------------------------------------------
+   Theme and type size
+   -------------------------------------------------------------------------- */
+
+function readTheme() {
+  try {
+    const value = localStorage.getItem(THEME_KEY);
+    return value === 'light' || value === 'dark' ? value : 'system';
+  } catch {
+    return 'system';
+  }
+}
+
+function readScale() {
+  try {
+    const value = Number(localStorage.getItem(SCALE_KEY));
+    return [1, 1.15, 1.3].includes(value) ? value : 1;
+  } catch {
+    return 1;
+  }
+}
+
+function applyTheme(value, { persist = true } = {}) {
+  const theme = value === 'light' || value === 'dark' ? value : 'system';
+  const meta = document.querySelector('meta[name="color-scheme"]');
+  if (meta) meta.setAttribute('content', theme === 'system' ? 'light dark' : theme);
+  document.documentElement.style.colorScheme = theme === 'system' ? 'light dark' : theme;
+  if (persist) {
+    try {
+      if (theme === 'system') localStorage.removeItem(THEME_KEY);
+      else localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // The selected theme still applies for this page.
+    }
+  }
+  for (const radio of $$('input[name="theme"]', els.settingsDialog)) {
+    radio.checked = radio.value === theme;
+  }
+  syncFrameTheme();
+}
+
+function applyScale(value, { persist = true } = {}) {
+  const scale = [1, 1.15, 1.3].includes(Number(value)) ? Number(value) : 1;
+  if (persist) {
+    try {
+      localStorage.setItem(SCALE_KEY, String(scale));
+    } catch {
+      // The selected size still applies for this page.
+    }
+  }
+  for (const radio of $$('input[name="scale"]', els.settingsDialog)) {
+    radio.checked = Number(radio.value) === scale;
+  }
+  syncFrameScale();
+}
+
+function syncFrameTheme() {
+  const doc = els.frame.contentDocument;
+  if (!doc || !doc.documentElement) return;
+  const theme = readTheme();
+  doc.documentElement.setAttribute('data-mode', theme === 'system' ? 'auto' : theme);
+}
+
+function syncFrameScale() {
+  const doc = els.frame.contentDocument;
+  if (!doc || !doc.documentElement) return;
+  doc.documentElement.style.setProperty('--am-scale', String(readScale()));
+}
+
+/* --------------------------------------------------------------------------
+   Boot
+   -------------------------------------------------------------------------- */
+
+async function init() {
+  detectPlatform();
+  applyTheme(readTheme(), { persist: false });
+  applyScale(readScale(), { persist: false });
+  bindStaticEvents();
+
+  try {
+    const response = await fetch('data/manifest.json', { cache: 'no-cache' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    manifest = await response.json();
+  } catch (error) {
+    console.error('读取书架失败', error);
+    renderBootError(error);
+    return;
+  }
+
+  setupSiteMeta();
+  renderHome();
+  route();
+}
+
+function detectPlatform() {
+  const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.userAgent);
+  const label = isMac ? '⌘ K' : 'Ctrl K';
+  for (const node of $$('[data-kbd]')) node.textContent = label;
+}
+
+function setupSiteMeta() {
+  const site = manifest.site || {};
+  const title = site.title || '知识库';
+  for (const node of $$('.brand-name')) node.textContent = title;
+  const heroTitle = $('#hero-title');
+  if (heroTitle) heroTitle.textContent = title;
+  const description = $('meta[name="description"]');
+  if (description && site.description) description.setAttribute('content', site.description);
+
+  if (site.repo) {
+    for (const link of [els.repoLink, els.footerRepo, els.settingsRepo, els.drawerRepo]) {
+      if (link) link.href = site.repo;
+    }
+  }
+
+  const active = manifest.kbs.filter((kb) => kb.status === 'active');
+  const docs = active.reduce((sum, kb) => sum + kb.pageCount, 0);
+  const chars = active.reduce((sum, kb) => sum + kb.charCount, 0);
+  els.statKbs.textContent = String(manifest.kbs.length);
+  els.statDocs.textContent = String(docs);
+  els.statChars.textContent = formatCompact(chars);
+  els.heroSearchLabel.textContent = docs ? `搜索 ${docs} 篇文档` : '搜索全部内容';
+  els.shelfNote.textContent = site.latestUpdated
+    ? `${manifest.kbs.length} 个知识库 · 更新 ${site.latestUpdated}`
+    : `${manifest.kbs.length} 个知识库`;
+  document.title = `${title} · HTML 阅读器`;
+}
+
+function renderBootError(error) {
+  els.shelfNote.textContent = '无法读取书架';
+  els.shelfList.replaceChildren(
+    el(
+      'div',
+      { class: 'boot-error' },
+      el('h3', {}, '书架读取失败'),
+      el('p', {}, '请检查 data/manifest.json 是否存在，或运行 npm run build 后再试。'),
+      el(
+        'button',
+        {
+          type: 'button',
+          onclick: () => window.location.reload(),
+        },
+        '重新加载',
+      ),
+    ),
+  );
+  console.error(error);
+}
+
+/* --------------------------------------------------------------------------
+   Home
+   -------------------------------------------------------------------------- */
+
+function renderHome() {
+  renderShelf();
+  renderResume();
+}
+
+function renderShelf() {
+  const rows = manifest.kbs.map((kb, index) => makeShelfRow(kb, index));
+  els.shelfList.replaceChildren(...(rows.length ? rows : [el('p', { class: 'boot' }, '书架还是空的。')]));
+}
+
+function makeShelfRow(kb, index) {
+  const active = kb.status === 'active' && kb.pageCount > 0;
+  const overview = kb.pages.find((page) => page.kind === 'overview') || kb.pages[0] || null;
+  const docs = kb.pages.filter((page) => page.kind === 'doc');
+  const row = el('article', { class: `kb-row${active ? '' : ' is-planned'}` });
+  row.style.setProperty('--kb-accent', kb.accent || 'var(--copper)');
+
+  const badgeText = active
+    ? `${kb.chapterCount} ${kb.unit || '篇'}`
+    : (kb.status === 'planned' ? '筹备中' : '暂无页面');
+  const plate = el(
+    'div',
+    { class: 'kb-plate' },
+    el('span', { class: 'kb-code' }, `KB-${String(index + 1).padStart(2, '0')}`),
+    el('span', { class: `kb-badge${active ? '' : ' is-planned'}` }, badgeText),
+  );
+
+  const body = el('div', { class: 'kb-body' });
+  const title = active && overview
+    ? el('h3', { class: 'kb-title' }, el('a', { href: hrefFor(kb, overview) }, kb.title))
+    : el('h3', { class: 'kb-title' }, kb.title);
+  body.append(title);
+  if (kb.subtitle) body.append(el('p', { class: 'kb-sub' }, kb.subtitle));
+  if (kb.description) body.append(el('p', { class: 'kb-desc' }, kb.description));
+
+  if (kb.tags && kb.tags.length) {
+    body.append(el('ul', { class: 'kb-tags' }, ...kb.tags.map((tag) => el('li', {}, tag))));
+  }
+
+  if (active) {
+    const meta = el('p', { class: 'kb-meta' });
+    meta.append(
+      el('span', {}, `${kb.pageCount} 页`),
+      el('span', {}, formatChars(kb.charCount)),
+    );
+    if (kb.updatedAt) meta.append(el('span', {}, `更新 ${kb.updatedAt}`));
+    body.append(meta);
+
+    if (docs.length) {
+      const list = el('ol', { class: 'chapter-list' });
+      for (const doc of docs.slice(0, 12)) {
+        list.append(
+          el(
+            'li',
+            {},
+            el(
+              'a',
+              { href: hrefFor(kb, doc) },
+              el('span', { class: 'ch-code' }, doc.code || '·'),
+              el('span', { class: 'ch-title' }, doc.shortTitle),
+            ),
+          ),
+        );
+      }
+      body.append(list);
+      if (docs.length > 12) {
+        body.append(
+          el(
+            'a',
+            { class: 'kb-more', href: hrefFor(kb, overview || docs[0]) },
+            `还有 ${docs.length - 12} ${kb.unit || '篇'}，从总览进入`,
+          ),
+        );
+      }
+    } else if (overview) {
+      body.append(el('a', { class: 'kb-more', href: hrefFor(kb, overview) }, '打开总览'));
+    }
+  } else if (!kb.description) {
+    body.append(
+      el(
+        'p',
+        { class: 'kb-planned-note' },
+        kb.status === 'planned'
+          ? '把 HTML 页面放进对应文件夹，重新构建后就会出现在书架上。'
+          : '这个知识库还没有页面。',
+      ),
+    );
+  }
+
+  const side = el('div', { class: 'kb-side' });
+  if (active) {
+    side.append(
+      el(
+        'div',
+        { class: 'kb-side-meta' },
+        el('strong', {}, `${kb.chapterCount} ${kb.unit || '篇'}`),
+        el('span', {}, '全文可检索'),
+      ),
+    );
+    side.append(
+      el(
+        'a',
+        { class: 'kb-enter', href: hrefFor(kb, overview) },
+        overview && overview.kind === 'overview' ? '从总览开始' : '开始阅读',
+        icon('i-arrow-right'),
+      ),
+    );
+  } else {
+    side.append(
+      el(
+        'div',
+        { class: 'kb-side-meta' },
+        el('strong', {}, kb.status === 'planned' ? '尚未发布' : '暂无页面'),
+      ),
+    );
+  }
+
+  row.append(plate, body, side);
+  return row;
+}
+
+function renderResume() {
+  if (!manifest || !els.resume) return;
+  let last = null;
+  try {
+    last = JSON.parse(localStorage.getItem(LAST_KEY) || 'null');
+  } catch {
+    last = null;
+  }
+  if (!last || !last.slug || !last.pageId) {
+    els.resume.hidden = true;
+    els.resume.replaceChildren();
+    return;
+  }
+  const kb = manifest.kbs.find((candidate) => candidate.slug === last.slug && candidate.status === 'active');
+  const page = kb && kb.pages.find((candidate) => candidate.id === last.pageId);
+  if (!kb || !page) {
+    els.resume.hidden = true;
+    els.resume.replaceChildren();
+    return;
+  }
+  const label = page.kind === 'overview' ? '总览' : page.shortTitle;
+  els.resume.replaceChildren(
+    el(
+      'a',
+      { href: hrefFor(kb, page) },
+      el('span', { class: 'resume-label' }, '继续阅读'),
+      el('span', { class: 'resume-title' }, `${kb.title} / ${label}`),
+      icon('i-arrow-right'),
+    ),
+  );
+  els.resume.hidden = false;
+}
+
+function saveLast(kb, page) {
+  try {
+    localStorage.setItem(LAST_KEY, JSON.stringify({ slug: kb.slug, pageId: page.id, at: Date.now() }));
+  } catch {
+    // Reading still works if storage is unavailable.
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Routing
+   -------------------------------------------------------------------------- */
+
+function parseHash() {
+  const raw = location.hash.replace(/^#\/?/, '');
+  if (!raw) return { view: 'home' };
+  const parts = raw.split('/').filter(Boolean).map(safeDecode);
+  if (parts[0] === 'kb' && parts[1]) {
+    return {
+      view: 'reader',
+      slug: parts[1],
+      pageId: parts[2] || null,
+      anchor: parts[3] || null,
+    };
+  }
+  return { view: 'home' };
+}
+
+function route() {
+  if (!manifest) return;
+  const next = parseHash();
+  if (next.view !== 'reader') {
+    showHome();
+    return;
+  }
+
+  const kb = manifest.kbs.find((candidate) => candidate.slug === next.slug);
+  if (!kb || kb.status !== 'active' || !kb.pages.length) {
+    history.replaceState(null, '', '#/');
+    showHome();
+    if (next.slug) showToast('没有找到这个知识库。');
+    return;
+  }
+
+  let page = next.pageId ? kb.pages.find((candidate) => candidate.id === next.pageId) : null;
+  if (!page) {
+    page = kb.pages.find((candidate) => candidate.kind === 'overview') || kb.pages[0];
+    history.replaceState(null, '', hrefFor(kb, page, next.anchor));
+  }
+
+  showReader(kb, page, next.anchor);
+}
+
+function showHome() {
+  const wasReading = document.body.classList.contains('reading');
+  document.body.classList.remove('reading');
+  els.home.hidden = false;
+  els.reader.hidden = true;
+  els.crumb.hidden = true;
+  els.menuBtn.hidden = true;
+  els.rawLink.hidden = true;
+  els.repoLink.hidden = false;
+  els.menuBtn.setAttribute('aria-expanded', 'false');
+  if (els.drawer.open) els.drawer.close();
+  els.loadBar.hidden = true;
+  current = { kb: null, page: null, anchor: null };
+  hadPage = false;
+  document.title = `${manifest?.site?.title || '知识库'} · HTML 阅读器`;
+  renderResume();
+  if (wasReading) {
+    window.setTimeout(() => window.scrollTo(0, homeScrollY), 0);
+  }
+}
+
+function showReader(kb, page, anchor) {
+  const wasReading = document.body.classList.contains('reading');
+  const previousAnchor = current.anchor;
+  if (!wasReading) homeScrollY = window.scrollY;
+  const isNewPage = !current.page || current.kb?.slug !== kb.slug || current.page.id !== page.id;
+
+  current = { kb, page, anchor: anchor || null };
+  document.body.classList.add('reading');
+  els.home.hidden = true;
+  els.reader.hidden = false;
+
+  els.crumb.hidden = false;
+  els.crumbKb.textContent = kb.title;
+  els.crumbPage.textContent = page.kind === 'overview' ? '总览' : page.shortTitle;
+  els.menuBtn.hidden = false;
+  els.rawLink.hidden = false;
+  els.rawLink.href = page.href + (anchor ? `#${encodeURIComponent(anchor)}` : '');
+  els.repoLink.hidden = false;
+
+  const pageLabel = page.kind === 'overview' ? '总览' : page.shortTitle;
+  els.readerTitle.textContent = `${pageLabel} · ${kb.title}`;
+  els.sideKb.textContent = kb.title;
+  els.sideSub.textContent = kb.subtitle || '';
+  els.sideChars.textContent = formatChars(page.chars);
+  els.drawerTitle.textContent = kb.title;
+
+  renderChapterList(els.chapterList, kb, page);
+  renderChapterList(els.drawerChapters, kb, page);
+  renderOutline(els.outlineList, kb, page);
+  renderOutline(els.drawerOutline, kb, page);
+  renderPageNav(kb, page);
+  syncSettingsRawLink();
+
+  document.title = `${pageLabel} · ${kb.title}`;
+  saveLast(kb, page);
+  activeOutlineKey = '';
+
+  const srcChanged = frameHref !== page.href;
+  if (srcChanged) {
+    els.loadBar.hidden = false;
+    els.frame.title = `${pageLabel} · ${kb.title}`;
+    navigateFrame(page.href);
+  } else {
+    syncFrameTheme();
+    syncFrameScale();
+    if (anchor) scrollToAnchor(anchor);
+    else if (previousAnchor || !wasReading) scrollFrameTop();
+    else updateOutlineActive(els.frame.contentDocument);
+  }
+
+  if (isNewPage && hadPage) {
+    els.readerTitle.focus({ preventScroll: true });
+  }
+  hadPage = true;
+
+  if (els.drawer.open) els.drawer.close();
+}
+
+function renderChapterList(container, kb, activePage) {
+  const items = kb.pages.map((page) =>
+    el(
+      'li',
+      {},
+      el(
+        'a',
+        {
+          href: hrefFor(kb, page),
+          'aria-current': page.id === activePage.id ? 'page' : null,
+        },
+        el('span', { class: 'ch-code' }, page.kind === 'overview' ? '总' : page.code || '·'),
+        el('span', { class: 'ch-title' }, page.kind === 'overview' ? '总览' : page.shortTitle),
+      ),
+    ),
+  );
+  container.replaceChildren(...items);
+}
+
+function renderOutline(container, kb, page) {
+  const sections = page.sections || [];
+  const items = sections.map((section) =>
+    el(
+      'li',
+      {},
+      el(
+        'a',
+        {
+          href: hrefFor(kb, page, section.id),
+          dataset: section.id ? { section: section.id } : {},
+        },
+        section.title,
+      ),
+    ),
+  );
+  container.replaceChildren(...items);
+  const nav = container.closest('nav');
+  if (nav) nav.hidden = sections.length === 0;
+}
+
+function renderPageNav(kb, page) {
+  const index = kb.pages.findIndex((candidate) => candidate.id === page.id);
+  const prev = index > 0 ? kb.pages[index - 1] : null;
+  const next = index >= 0 && index < kb.pages.length - 1 ? kb.pages[index + 1] : null;
+
+  setNavLink(els.prevLink, els.prevTitle, kb, prev);
+  setNavLink(els.nextLink, els.nextTitle, kb, next);
+
+  const currentNumber = String(index + 1).padStart(2, '0');
+  const total = String(kb.pages.length).padStart(2, '0');
+  els.pageCount.textContent = `${currentNumber} / ${total}`;
+}
+
+function setNavLink(link, titleNode, kb, page) {
+  if (!page) {
+    link.classList.add('is-disabled');
+    link.setAttribute('aria-disabled', 'true');
+    link.removeAttribute('href');
+    link.tabIndex = -1;
+    titleNode.textContent = '';
+    return;
+  }
+  link.classList.remove('is-disabled');
+  link.removeAttribute('aria-disabled');
+  link.href = hrefFor(kb, page);
+  link.tabIndex = 0;
+  titleNode.textContent = page.kind === 'overview' ? '总览' : page.shortTitle;
+}
+
+function syncSettingsRawLink() {
+  if (!current.kb || !current.page) {
+    els.settingsRaw.hidden = true;
+    els.settingsRaw.removeAttribute('href');
+    return;
+  }
+  els.settingsRaw.hidden = false;
+  els.settingsRaw.href = current.page.href + (current.anchor ? `#${encodeURIComponent(current.anchor)}` : '');
+}
+
+/* --------------------------------------------------------------------------
+   Content frame
+   -------------------------------------------------------------------------- */
+
+function navigateFrame(href) {
+  frameHref = href;
+  try {
+    const win = els.frame.contentWindow;
+    if (win) win.location.replace(href);
+    else els.frame.src = href;
+  } catch {
+    els.frame.src = href;
+  }
+}
+
+function handleFrameLoad() {
+  if (!current.page || !frameHref) return;
+  const doc = els.frame.contentDocument;
+  if (!doc) return;
+
+  ensureFrameStyle(doc);
+  syncFrameTheme();
+  syncFrameScale();
+  bindContentDoc(doc);
+  els.loadBar.hidden = true;
+
+  if (current.anchor) {
+    scrollToAnchor(current.anchor);
+  } else {
+    updateOutlineActive(doc);
+  }
+}
+
+function ensureFrameStyle(doc) {
+  if (!doc.head || doc.getElementById('kb-host-frame-style')) return;
+  const style = doc.createElement('style');
+  style.id = 'kb-host-frame-style';
+  style.textContent = `
+    .kb-target { outline: 2px solid var(--accent, #a34b28); outline-offset: 6px; border-radius: 2px; }
+    .am-toolbar, .am-export, .am-colophon { display: none !important; }
+  `;
+  doc.head.append(style);
+}
+
+function bindContentDoc(doc) {
+  if (boundDocs.has(doc)) return;
+  boundDocs.add(doc);
+
+  doc.addEventListener(
+    'click',
+    (event) => {
+      if (!current.kb || !current.page || event.defaultPrevented) return;
+      const target = event.target.closest?.('a[href]') || null;
+      if (!target) return;
+
+      const raw = target.getAttribute('href');
+      if (!raw || raw.startsWith('#')) return;
+      if (/^(mailto:|tel:)/i.test(raw)) return;
+
+      let url;
+      try {
+        url = new URL(raw, doc.baseURI);
+      } catch {
+        return;
+      }
+      if (!/^https?:$/.test(url.protocol)) return;
+
+      const modified = event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0;
+
+      if (url.origin !== location.origin) {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        window.open(url.href, '_blank', 'noopener');
+        return;
+      }
+
+      const file = safeDecode(url.pathname.split('/').pop() || '');
+      if (/\.html?$/i.test(file)) {
+        const page = current.kb.pages.find((candidate) => candidate.file.toLowerCase() === file.toLowerCase());
+        if (!page) {
+          event.preventDefault();
+          showToast('这一页没有随知识库一起发布。');
+          return;
+        }
+        const targetAnchor = url.hash ? safeDecode(url.hash.slice(1)) : '';
+        const href = hrefFor(current.kb, page, targetAnchor);
+        event.preventDefault();
+        if (modified) {
+          window.open(new URL(href, location.href).href, '_blank', 'noopener');
+          return;
+        }
+        if (location.hash === href) route();
+        else location.hash = href;
+        return;
+      }
+
+      if (event.button !== 0) return;
+      event.preventDefault();
+      window.open(url.href, '_blank', 'noopener');
+    },
+    false,
+  );
+
+  doc.addEventListener(
+    'scroll',
+    () => {
+      if (scrollRaf) return;
+      scrollRaf = requestAnimationFrame(() => {
+        scrollRaf = 0;
+        if (els.frame.contentDocument === doc) updateOutlineActive(doc);
+      });
+    },
+    { passive: true, capture: true },
+  );
+
+  doc.addEventListener('keydown', (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      openSearch();
+    }
+  });
+}
+
+function scrollFrameTop() {
+  const doc = els.frame.contentDocument;
+  if (!doc) return;
+  if (doc.scrollingElement) doc.scrollingElement.scrollTop = 0;
+  else {
+    if (doc.documentElement) doc.documentElement.scrollTop = 0;
+    if (doc.body) doc.body.scrollTop = 0;
+  }
+  updateOutlineActive(doc);
+}
+
+function scrollToAnchor(anchor) {
+  if (!anchor) return;
+  const doc = els.frame.contentDocument;
+  if (!doc) return;
+  const target = doc.getElementById(anchor);
+  if (!target) return;
+  target.scrollIntoView({
+    behavior: reducedMotion.matches ? 'auto' : 'smooth',
+    block: 'start',
+  });
+  target.classList.add('kb-target');
+  window.setTimeout(() => target.classList.remove('kb-target'), 2200);
+  window.setTimeout(() => updateOutlineActive(doc), 80);
+}
+
+function updateOutlineActive(doc) {
+  if (!doc || !current.page) return;
+  const sections = current.page.sections || [];
+  let activeId = null;
+  if (sections.length) {
+    activeId = sections[0].id || null;
+    for (const section of sections) {
+      if (!section.id) continue;
+      const node = doc.getElementById(section.id);
+      if (!node) continue;
+      if (node.getBoundingClientRect().top <= 150) activeId = section.id;
+    }
+  }
+  const key = `${current.page.id}:${activeId || ''}`;
+  if (key === activeOutlineKey) return;
+  activeOutlineKey = key;
+  for (const link of $$('[data-section]')) {
+    if (activeId && link.dataset.section === activeId) link.setAttribute('aria-current', 'true');
+    else link.removeAttribute('aria-current');
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Drawer / dialogs
+   -------------------------------------------------------------------------- */
+
+function openDrawer() {
+  if (!current.kb) return;
+  if (!els.drawer.open) {
+    els.drawer.showModal();
+    els.menuBtn.setAttribute('aria-expanded', 'true');
+    const close = $('[data-close="drawer"]', els.drawer);
+    if (close) close.focus();
+  }
+}
+
+function openSearch() {
+  if (!manifest) return;
+  if (els.searchDialog.open) {
+    els.searchInput.focus();
+    return;
+  }
+  els.searchInput.value = '';
+  searchQuery = '';
+  clearTimeout(searchTimer);
+  activeResult = -1;
+  searchResults = [];
+  els.searchResults.replaceChildren();
+  els.searchInput.removeAttribute('aria-activedescendant');
+  renderSearchIdle();
+  els.searchDialog.showModal();
+  requestAnimationFrame(() => els.searchInput.focus());
+  ensureSearchIndexes();
+}
+
+function openSettings() {
+  if (!els.settingsDialog.open) {
+    for (const radio of $$('input[name="theme"]', els.settingsDialog)) {
+      radio.checked = radio.value === readTheme();
+    }
+    for (const radio of $$('input[name="scale"]', els.settingsDialog)) {
+      radio.checked = Number(radio.value) === readScale();
+    }
+    syncSettingsRawLink();
+    els.settingsDialog.showModal();
+  }
+  const checked = $('input[name="theme"]:checked', els.settingsDialog);
+  requestAnimationFrame(() => (checked || els.settingsDialog).focus());
+}
+
+function enableLightDismiss(dialog) {
+  let downOutside = false;
+  const outside = (event) => {
+    const rect = dialog.getBoundingClientRect();
+    return event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom;
+  };
+  dialog.addEventListener('pointerdown', (event) => {
+    downOutside = outside(event);
+  });
+  dialog.addEventListener('pointerup', (event) => {
+    if (downOutside && outside(event)) dialog.close();
+    downOutside = false;
+  });
+}
+
+/* --------------------------------------------------------------------------
+   Search
+   -------------------------------------------------------------------------- */
+
+async function ensureSearchIndexes() {
+  if (!manifest) return;
+  if (searchPromise) return searchPromise;
+  const kbs = manifest.kbs.filter((kb) => kb.status === 'active' && kb.searchHref);
+  if (!kbs.length) {
+    renderSearchIdle();
+    return;
+  }
+  if (kbs.every((kb) => searchIndex.has(kb.slug))) {
+    if (els.searchInput.value.trim()) runSearch(els.searchInput.value);
+    else renderSearchIdle();
+    return;
+  }
+
+  searchLoading = true;
+  searchErrorCount = 0;
+  if (els.searchDialog.open) {
+    els.searchStatus.textContent = '正在读取全文索引…';
+    if (!els.searchResults.childElementCount) {
+      els.searchResults.replaceChildren(el('div', { class: 'search-empty' }, el('p', {}, '正在读取全文索引…')));
+    }
+  }
+
+  searchPromise = Promise.all(kbs.map((kb) => loadSearchIndex(kb))).finally(() => {
+    searchLoading = false;
+    searchPromise = null;
+  });
+  await searchPromise;
+
+  if (!els.searchDialog.open) return;
+  if (els.searchInput.value.trim()) runSearch(els.searchInput.value);
+  else renderSearchIdle();
+}
+
+function loadSearchIndex(kb) {
+  if (searchIndex.has(kb.slug)) return Promise.resolve(searchIndex.get(kb.slug));
+  if (searchPending.has(kb.slug)) return searchPending.get(kb.slug);
+
+  const promise = fetch(kb.searchHref, { cache: 'no-cache' })
+    .then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    })
+    .then((data) => {
+      searchIndex.set(kb.slug, data);
+      return data;
+    })
+    .catch((error) => {
+      console.warn(`搜索索引读取失败：${kb.slug}`, error);
+      searchErrorCount += 1;
+      return null;
+    })
+    .finally(() => {
+      searchPending.delete(kb.slug);
+    });
+
+  searchPending.set(kb.slug, promise);
+  return promise;
+}
+
+function renderSearchIdle() {
+  if (searchLoading) {
+    els.searchStatus.textContent = '正在读取全文索引…';
+    els.searchResults.replaceChildren(el('div', { class: 'search-empty' }, el('p', {}, '正在读取全文索引…')));
+    return;
+  }
+
+  const active = manifest ? manifest.kbs.filter((kb) => kb.status === 'active') : [];
+  const docs = active.reduce((sum, kb) => sum + kb.pageCount, 0);
+  if (!docs) {
+    els.searchStatus.textContent = '书架里还没有可搜索的文档';
+    els.searchResults.replaceChildren(
+      el('div', { class: 'search-empty' }, el('p', {}, '书架里还没有可搜索的文档。')),
+    );
+    return;
+  }
+
+  const errorNote = searchErrorCount ? `（${searchErrorCount} 个索引读取失败）` : '';
+  els.searchStatus.textContent = `全文检索 · ${docs} 篇文档${errorNote}`;
+
+  const tags = [];
+  for (const kb of active) {
+    for (const tag of kb.tags || []) {
+      if (!tags.includes(tag)) tags.push(tag);
+    }
+  }
+
+  const empty = el('div', { class: 'search-empty' });
+  empty.append(el('p', {}, '输入关键词，搜索章节标题与正文。'));
+  empty.append(el('p', {}, '支持中文和英文，多个词之间用空格分隔。'));
+  if (tags.length) {
+    const chips = el('div', { class: 'search-chips' });
+    for (const tag of tags.slice(0, 10)) {
+      chips.append(el('button', { class: 'search-chip', type: 'button', dataset: { query: tag } }, tag));
+    }
+    empty.append(chips);
+  }
+  els.searchResults.replaceChildren(empty);
+  els.searchInput.removeAttribute('aria-activedescendant');
+  activeResult = -1;
+  searchResults = [];
+}
+
+function runSearch(rawQuery) {
+  const query = String(rawQuery || '').trim();
+  searchQuery = query;
+
+  if (!query) {
+    renderSearchIdle();
+    return;
+  }
+  if (searchLoading) {
+    els.searchStatus.textContent = '正在读取全文索引…';
+    els.searchResults.replaceChildren(el('div', { class: 'search-empty' }, el('p', {}, '正在读取全文索引…')));
+    return;
+  }
+
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) {
+    renderSearchIdle();
+    return;
+  }
+
+  const found = [];
+  const kbs = manifest ? manifest.kbs.filter((kb) => kb.status === 'active') : [];
+  for (const kb of kbs) {
+    const data = searchIndex.get(kb.slug);
+    if (!data || !Array.isArray(data.docs)) continue;
+    for (const doc of data.docs) {
+      const page = kb.pages.find((candidate) => candidate.id === doc.pageId);
+      if (!page) continue;
+      const pageOrder = kb.pages.indexOf(page);
+      const pageTitleLower = String(doc.pageTitle || '').toLowerCase();
+      for (const [sectionOrder, section] of (doc.sections || []).entries()) {
+        const heading = String(section.heading || '');
+        const text = String(section.text || '');
+        const headingLower = heading.toLowerCase();
+        const textLower = text.toLowerCase();
+        const haystack = `${headingLower} ${textLower}`;
+        if (!terms.every((term) => haystack.includes(term))) continue;
+
+        let score = 0;
+        for (const term of terms) {
+          if (headingLower.includes(term)) score += 30;
+          if (pageTitleLower.includes(term)) score += 55;
+          score += Math.min(countOccurrences(textLower, term), 8) * 3;
+        }
+        if (query.length > 1 && headingLower.includes(query.toLowerCase())) score += 40;
+
+        found.push({
+          kb,
+          doc,
+          page,
+          pageOrder,
+          section,
+          sectionOrder,
+          score,
+        });
+      }
+    }
+  }
+
+  found.sort(
+    (a, b) =>
+      b.score - a.score ||
+      (a.kb.order || 0) - (b.kb.order || 0) ||
+      a.pageOrder - b.pageOrder ||
+      a.sectionOrder - b.sectionOrder,
+  );
+
+  renderSearchResults(found, query, terms);
+}
+
+function countOccurrences(haystack, needle) {
+  if (!needle) return 0;
+  let index = 0;
+  let count = 0;
+  while ((index = haystack.indexOf(needle, index)) !== -1) {
+    count += 1;
+    index += needle.length;
+  }
+  return count;
+}
+
+function renderSearchResults(found, query, terms) {
+  searchResults = found.slice(0, 60);
+  activeResult = -1;
+  els.searchInput.removeAttribute('aria-activedescendant');
+  els.searchResults.replaceChildren();
+
+  if (!found.length) {
+    els.searchStatus.textContent = `没有找到「${query}」`;
+    const empty = el(
+      'div',
+      { class: 'search-empty' },
+      el('p', {}, '没有找到相关内容。'),
+      el('p', {}, '试试更短的关键词，或换一个术语。'),
+    );
+    els.searchResults.replaceChildren(empty);
+    return;
+  }
+
+  els.searchStatus.textContent =
+    found.length > 60 ? `找到 ${found.length} 条结果，显示前 60 条` : `找到 ${found.length} 条结果`;
+
+  const fragment = document.createDocumentFragment();
+  searchResults.forEach((result, index) => {
+    const pageLabel = result.page.kind === 'overview'
+      ? '总览'
+      : `${result.page.code ? `${result.page.code} · ` : ''}${result.page.shortTitle}`;
+    const heading = result.section.heading || result.doc.pageTitle || '正文';
+    const snippet = makeSnippet(result.section.text || '', terms);
+
+    const meta = el('div', { class: 'search-result-meta' });
+    meta.append(el('span', { class: 'sr-kb' }, result.kb.title));
+    meta.append(el('span', {}, pageLabel));
+
+    const title = el('div', { class: 'search-result-title' });
+    fillHighlighted(title, heading, terms);
+
+    const snippetNode = el('div', { class: 'search-result-snippet' });
+    if (snippet) fillHighlighted(snippetNode, snippet, terms);
+    else snippetNode.textContent = '打开这一节查看内容。';
+
+    const link = el(
+      'a',
+      {
+        class: 'search-result',
+        href: hrefFor(result.kb, result.page, result.section.id),
+        role: 'option',
+        id: `search-option-${index}`,
+        tabindex: '-1',
+        'aria-selected': 'false',
+        dataset: { result: String(index) },
+      },
+      meta,
+      title,
+      snippetNode,
+    );
+    fragment.append(link);
+  });
+  els.searchResults.append(fragment);
+}
+
+function makeSnippet(text, terms) {
+  if (!text) return '';
+  const lower = text.toLowerCase();
+  let index = -1;
+  for (const term of terms) {
+    const at = lower.indexOf(term);
+    if (at >= 0 && (index < 0 || at < index)) index = at;
+  }
+  if (index < 0) index = 0;
+  const start = Math.max(0, index - 54);
+  const end = Math.min(text.length, index + 148);
+  return `${start > 0 ? '…' : ''}${text.slice(start, end).trim()}${end < text.length ? '…' : ''}`;
+}
+
+function fillHighlighted(node, text, terms) {
+  node.textContent = '';
+  if (!terms.length) {
+    node.textContent = text;
+    return;
+  }
+  let pattern;
+  try {
+    pattern = new RegExp(`(${terms.map(escapeRegExp).join('|')})`, 'gi');
+  } catch {
+    node.textContent = text;
+    return;
+  }
+  let last = 0;
+  for (const match of text.matchAll(pattern)) {
+    if (match.index > last) node.append(text.slice(last, match.index));
+    const mark = document.createElement('mark');
+    mark.textContent = match[0];
+    node.append(mark);
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) node.append(text.slice(last));
+}
+
+function setActiveResult(index) {
+  if (!searchResults.length) return;
+  const clamped = Math.max(-1, Math.min(index, searchResults.length - 1));
+  for (const node of $$('.search-result', els.searchResults)) {
+    node.classList.remove('is-active');
+    node.setAttribute('aria-selected', 'false');
+  }
+  activeResult = clamped;
+  if (clamped < 0) {
+    els.searchInput.removeAttribute('aria-activedescendant');
+    return;
+  }
+  const node = $(`#search-option-${clamped}`, els.searchResults);
+  if (!node) return;
+  node.classList.add('is-active');
+  node.setAttribute('aria-selected', 'true');
+  els.searchInput.setAttribute('aria-activedescendant', node.id);
+  node.scrollIntoView({ block: 'nearest' });
+}
+
+function activateResult(index) {
+  const result = searchResults[index];
+  if (!result) return;
+  const href = hrefFor(result.kb, result.page, result.section.id);
+  els.searchDialog.close();
+  if (location.hash === href) route();
+  else location.hash = href;
+}
+
+/* --------------------------------------------------------------------------
+   Events
+   -------------------------------------------------------------------------- */
+
+function bindStaticEvents() {
+  els.searchBtn.addEventListener('click', openSearch);
+  els.heroSearch.addEventListener('click', openSearch);
+  els.settingsBtn.addEventListener('click', openSettings);
+  els.menuBtn.addEventListener('click', openDrawer);
+
+  for (const trigger of [els.searchBtn, els.heroSearch]) {
+    trigger.addEventListener('pointerenter', () => ensureSearchIndexes(), { once: true });
+  }
+
+  for (const button of $$('[data-close]')) {
+    button.addEventListener('click', () => {
+      const dialog = document.getElementById(button.dataset.close);
+      if (dialog?.open) dialog.close();
+    });
+  }
+
+  for (const dialog of [els.searchDialog, els.settingsDialog, els.drawer]) {
+    enableLightDismiss(dialog);
+  }
+
+  els.drawer.addEventListener('close', () => {
+    els.menuBtn.setAttribute('aria-expanded', 'false');
+  });
+
+  els.drawer.addEventListener('click', (event) => {
+    if (event.target.closest('a')) els.drawer.close();
+  });
+
+  els.settingsDialog.addEventListener('change', (event) => {
+    if (event.target.name === 'theme') applyTheme(event.target.value);
+    if (event.target.name === 'scale') applyScale(event.target.value);
+  });
+
+  els.searchInput.addEventListener('input', () => {
+    searchQuery = els.searchInput.value.trim();
+    clearTimeout(searchTimer);
+    searchTimer = window.setTimeout(() => runSearch(searchQuery), 80);
+  });
+
+  els.searchInput.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      if (!searchResults.length) return;
+      setActiveResult(activeResult < searchResults.length - 1 ? activeResult + 1 : 0);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (!searchResults.length) return;
+      setActiveResult(activeResult > 0 ? activeResult - 1 : -1);
+    } else if (event.key === 'Enter') {
+      if (!searchResults.length) return;
+      event.preventDefault();
+      activateResult(activeResult >= 0 ? activeResult : 0);
+    }
+  });
+
+  els.searchResults.addEventListener('click', (event) => {
+    const chip = event.target.closest('.search-chip');
+    if (chip) {
+      const query = chip.dataset.query || '';
+      els.searchInput.value = query;
+      searchQuery = query;
+      runSearch(query);
+      els.searchInput.focus();
+      return;
+    }
+    const result = event.target.closest('.search-result');
+    if (!result) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    activateResult(Number(result.dataset.result));
+  });
+
+  els.frame.addEventListener('load', handleFrameLoad);
+
+  window.addEventListener('hashchange', route);
+
+  window.addEventListener('keydown', (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      openSearch();
+    }
+  });
+
+  window.addEventListener('storage', (event) => {
+    if (event.key === THEME_KEY) applyTheme(readTheme(), { persist: false });
+    if (event.key === SCALE_KEY) applyScale(readScale(), { persist: false });
+  });
+
+  wideLayout.addEventListener('change', (event) => {
+    if (event.matches && els.drawer.open) els.drawer.close();
+  });
+}
+
+init().catch((error) => {
+  console.error(error);
+  renderBootError(error);
+});
