@@ -1,51 +1,23 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
-import * as cheerio from 'cheerio';
+import { execFileSync, execSync } from 'node:child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 const siteDir = path.join(root, 'site');
-const distDir = path.join(root, 'dist');
-const tmpDir = path.join(root, '.dist-tmp');
 const configPath = path.join(root, 'kbs.json');
-
-const SEARCH_LIMIT = 5000;
-const BLOCKS = 'h2,h3,h4,h5,p,li,td,th,blockquote,dt,dd,figcaption,caption,pre';
-const NOISE = [
-  'script', 'style', 'template', 'nav', 'button', 'textarea',
-  '.am-toolbar', '.am-export', '.am-toc', '.am-code-copy', '.am-table-controls',
-  '.am-diagram-expand', '.am-comment-btn', '.am-remark-hover', '.am-remark-pop',
-  '.am-reply', '.am-reply-bar', 'math', '.am-math-block',
-].join(',');
-
-const EMBED_CSS = `
-/* Injected by the host build: keep the page's theme / mode / size toolbar,
-   hide only the authoring actions that belong to the generator. */
-.am-export, .am-colophon, .am-reply, .am-reply-bar, .am-remark-hover, .am-remark-pop, .am-comment-btn,
-[data-am="reply"], [data-am="remark"], [data-am="copy"], [data-am="export"] { display: none !important; }
-`;
+const stageDir = path.join(root, '.build-src');
+const outDir = path.join(root, '.build-out');
+const distDir = path.join(root, 'dist');
+const toolsDir = path.join(root, '.tools', 'soupault');
+const SOUPAULT_VERSION = '5.3.0';
+const SOUPAULT_REPO = 'PataphysicalSociety/soupault';
 
 function log(...args) {
   console.log(...args);
-}
-
-function normalize(value) {
-  return String(value ?? '')
-    .replace(/\u00a0/g, ' ')
-    .replace(/[\u200b-\u200d\ufeff]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function charCount(text) {
-  return text.replace(/\s/g, '').length;
-}
-
-function escapeForLog(value) {
-  return String(value).replace(/\n/g, ' ');
 }
 
 function isDirectory(value) {
@@ -54,23 +26,6 @@ function isDirectory(value) {
   } catch {
     return false;
   }
-}
-
-function pageSort(a, b) {
-  const ai = a.toLowerCase() === 'index.html';
-  const bi = b.toLowerCase() === 'index.html';
-  if (ai !== bi) return ai ? -1 : 1;
-  const am = a.match(/^(\d+)/);
-  const bm = b.match(/^(\d+)/);
-  if (am && bm) {
-    const diff = Number(am[1]) - Number(bm[1]);
-    if (diff) return diff;
-  } else if (am) {
-    return -1;
-  } else if (bm) {
-    return 1;
-  }
-  return a.localeCompare(b, 'zh-CN');
 }
 
 async function copyTree(from, to) {
@@ -88,23 +43,6 @@ async function copyTree(from, to) {
       await fsp.copyFile(source, target);
     }
   }
-}
-
-async function preparePage(file) {
-  let html = await fsp.readFile(file, 'utf8');
-  // Some generated pages point their original-image paths one level above the
-  // knowledge-base folder. In the published layout assets/ and training/ live
-  // inside that folder, so normalise those references in the copied page.
-  html = html.replace(/data-am-src="\.\.\/(assets|training)\//g, 'data-am-src="$1/');
-  // The pages are self-contained (data: images). Allow same-origin originals
-  // referenced by data-am-src so the lightbox can load them; nothing else changes.
-  html = html.replace('img-src data:;', "img-src data: 'self';");
-  if (!html.includes('data-kb-host-style')) {
-    const tag = `<style data-kb-host-style>${EMBED_CSS}</style>`;
-    const head = html.search(/<\/head\s*>/i);
-    html = head >= 0 ? html.slice(0, head) + tag + html.slice(head) : tag + html;
-  }
-  await fsp.writeFile(file, html, 'utf8');
 }
 
 function lastGitDate(relativePath) {
@@ -127,281 +65,232 @@ async function newestMtime(dir, files) {
       const stat = await fsp.stat(path.join(dir, file));
       newest = Math.max(newest, stat.mtimeMs);
     } catch {
-      // Ignore a file that disappears mid-build.
+      // File disappeared between listing and stat.
     }
   }
   return newest ? new Date(newest).toISOString().slice(0, 10) : null;
 }
 
-function extractPage(html, file, slug) {
-  const $ = cheerio.load(html);
-  const $main = $('main').first();
-  const $scope = $main.length ? $main : $('body').first();
-  const majorTitle = normalize($scope.find('h1').first().text());
-  const docTitle = normalize($('title').first().text());
-  const title = majorTitle || docTitle || file.replace(/\.html$/i, '');
-  const isIndex = file.toLowerCase() === 'index.html';
-  const codeMatch = file.match(/^(\d+)/);
-  const code = isIndex ? '总' : (codeMatch ? codeMatch[1].padStart(2, '0') : '');
-  let shortTitle = isIndex
-    ? '总览'
-    : (title.includes('·') ? title.split('·').slice(1).join('·').trim() : title);
-  shortTitle = normalize(shortTitle) || title;
-
-  const groups = [];
-  const panels = $scope.find('section.am-panel').toArray();
-  if (panels.length) {
-    for (const [index, element] of panels.entries()) {
-      const $panel = $(element);
-      groups.push({
-        element: $panel,
-        id: normalize($panel.attr('id')) || `section-${index + 1}`,
-        heading: normalize($panel.find('h2').first().text()),
-      });
+function findBinary(dir) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isFile() && (entry.name === 'soupault' || entry.name === 'soupault.exe')) return full;
+    if (entry.isDirectory()) {
+      const nested = findBinary(full);
+      if (nested) return nested;
     }
-  } else {
-    groups.push({ element: $scope, id: '', heading: title });
+  }
+  return null;
+}
+
+function soupaultAsset() {
+  const platform = process.platform;
+  const arch = process.arch;
+  if (platform === 'win32') return `soupault-${SOUPAULT_VERSION}-win64.zip`;
+  if (platform === 'linux' && arch === 'x64') return `soupault-${SOUPAULT_VERSION}-linux-x86_64.tar.gz`;
+  if (platform === 'linux' && arch === 'arm64') return `soupault-${SOUPAULT_VERSION}-linux-arm64.tar.gz`;
+  if (platform === 'darwin' && arch === 'x64') return `soupault-${SOUPAULT_VERSION}-macos-x86_64.tar.gz`;
+  if (platform === 'darwin' && arch === 'arm64') return `soupault-${SOUPAULT_VERSION}-macos-arm64.tar.gz`;
+  return null;
+}
+
+async function download(url, target) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`下载失败：${url}（HTTP ${response.status}）`);
+  const buffer = Buffer.from(await response.arrayBuffer());
+  await fsp.mkdir(path.dirname(target), { recursive: true });
+  await fsp.writeFile(target, buffer);
+  return buffer;
+}
+
+function extractArchive(archivePath, targetDir) {
+  if (process.platform === 'win32') {
+    // The build shell may expose GNU tar (which cannot read zip) before the
+    // Windows System32 bsdtar, so use the system binary explicitly. Fall back
+    // to PowerShell on the off chance it is missing.
+    const systemTar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+    if (fs.existsSync(systemTar)) {
+      execFileSync(systemTar, ['-xf', archivePath, '-C', targetDir], { stdio: 'inherit' });
+      return;
+    }
+    execFileSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        'Expand-Archive -LiteralPath $env:SOUPAULT_ARCHIVE -DestinationPath $env:SOUPAULT_DIR -Force',
+      ],
+      {
+        env: { ...process.env, SOUPAULT_ARCHIVE: archivePath, SOUPAULT_DIR: targetDir },
+        stdio: 'inherit',
+      },
+    );
+    return;
+  }
+  execFileSync('tar', ['-xf', archivePath, '-C', targetDir], { stdio: 'inherit' });
+}
+
+async function ensureSoupault() {
+  if (process.env.SOUPAULT_BIN && fs.existsSync(process.env.SOUPAULT_BIN)) {
+    return process.env.SOUPAULT_BIN;
+  }
+  const cacheDir = path.join(toolsDir, SOUPAULT_VERSION);
+  await fsp.mkdir(cacheDir, { recursive: true });
+  const cached = findBinary(cacheDir);
+  if (cached) return cached;
+
+  const asset = soupaultAsset();
+  if (!asset) {
+    throw new Error(`没有适用于 ${process.platform}-${process.arch} 的 Soupault 二进制。请设置 SOUPAULT_BIN。`);
+  }
+  const base = `https://github.com/${SOUPAULT_REPO}/releases/download/${SOUPAULT_VERSION}`;
+  const sumsPath = path.join(cacheDir, 'sha256sums');
+  const archivePath = path.join(cacheDir, asset);
+  let sums = '';
+  try {
+    sums = await fsp.readFile(sumsPath, 'utf8');
+  } catch {
+    sums = (await download(`${base}/sha256sums`, sumsPath)).toString('utf8');
+  }
+  const line = sums.split(/\r?\n/).find((item) => item.includes(asset));
+  if (!line) throw new Error(`Soupault 校验文件中没有 ${asset}`);
+  const expected = line.trim().split(/\s+/)[0];
+
+  let archive;
+  try {
+    archive = await fsp.readFile(archivePath);
+  } catch {
+    archive = await download(`${base}/${asset}`, archivePath);
+  }
+  const actual = crypto.createHash('sha256').update(archive).digest('hex');
+  if (actual !== expected) {
+    await fsp.rm(archivePath, { force: true });
+    throw new Error(`Soupault 下载校验失败：${asset}`);
   }
 
-  const sections = [];
-  let allText = '';
-  for (const group of groups) {
-    const $clone = group.element.clone();
-    $clone.find(NOISE).remove();
+  log(`解压 Soupault ${SOUPAULT_VERSION}…`);
+  extractArchive(archivePath, cacheDir);
+  const binary = findBinary(cacheDir);
+  if (!binary) throw new Error('Soupault 解压后找不到可执行文件。');
+  if (process.platform !== 'win32') fs.chmodSync(binary, 0o755);
+  return binary;
+}
 
-    const pieces = [];
-    $clone.find(BLOCKS).each((_, element) => {
-      const $element = $(element);
-      if ($element.find(BLOCKS).length) return;
-      const text = normalize($element.text());
-      if (text) pieces.push(text);
-    });
+function runSoupault(binary) {
+  log('');
+  log('运行 Soupault…');
+  execFileSync(binary, [], { cwd: root, stdio: 'inherit', env: process.env });
+}
 
-    const heading = group.heading || title;
-    while (pieces.length && pieces[0] === heading) pieces.shift();
-    let text = normalize(pieces.join(' '));
-    if (text.length > SEARCH_LIMIT) text = text.slice(0, SEARCH_LIMIT);
-    allText += ` ${heading} ${text}`;
-    sections.push({
-      id: group.id,
-      title: heading,
-      heading,
-      text,
-    });
+function runPagefind() {
+  log('');
+  log('运行 Pagefind…');
+  execSync('npx pagefind --site .build-out', {
+    cwd: root,
+    stdio: 'inherit',
+    env: process.env,
+  });
+}
+
+async function buildLibrary(config) {
+  const kbs = [];
+  let latestUpdated = '';
+  for (const raw of config.kbs) {
+    const sourceDir = path.resolve(root, raw.source);
+    const exists = isDirectory(sourceDir);
+    let updatedAt = null;
+    let pageCount = 0;
+    if (exists) {
+      const files = (await fsp.readdir(sourceDir, { withFileTypes: true }))
+        .filter((entry) => entry.isFile() && /\.html?$/i.test(entry.name))
+        .map((entry) => entry.name);
+      pageCount = files.length;
+      const relative = path.relative(root, sourceDir).split(path.sep).join('/');
+      updatedAt = lastGitDate(relative) || await newestMtime(sourceDir, files);
+      if (updatedAt && updatedAt > latestUpdated) latestUpdated = updatedAt;
+    }
+    const status = raw.status || (exists ? (pageCount ? 'active' : 'empty') : 'planned');
+    kbs.push({ ...raw, status, updatedAt });
   }
-
+  kbs.sort((a, b) => {
+    const orderA = Number(a.order ?? 999);
+    const orderB = Number(b.order ?? 999);
+    return orderA - orderB || String(a.slug).localeCompare(String(b.slug));
+  });
   return {
-    page: {
-      id: file.replace(/\.html$/i, ''),
-      file,
-      href: `kb/${slug}/${encodeURIComponent(file)}`,
-      title,
-      shortTitle,
-      code,
-      kind: isIndex ? 'overview' : 'doc',
-      chars: charCount(allText),
-      sections: sections.map(({ id, title: sectionTitle }) => ({ id, title: sectionTitle })),
-    },
-    searchDoc: {
-      pageId: file.replace(/\.html$/i, ''),
-      pageTitle: title,
-      pageShort: shortTitle,
-      file,
-      href: `kb/${slug}/${encodeURIComponent(file)}`,
-      sections: sections.map(({ id, heading, text }) => ({ id, heading, text })),
-    },
+    site: { ...(config.site || {}), latestUpdated: latestUpdated || null },
+    kbs,
   };
 }
 
+async function stageSite(config) {
+  await fsp.rm(stageDir, { recursive: true, force: true });
+  await fsp.mkdir(stageDir, { recursive: true });
+  await copyTree(siteDir, stageDir);
+  for (const kb of config.kbs) {
+    const sourceDir = path.resolve(root, kb.source);
+    if (!isDirectory(sourceDir)) continue;
+    await copyTree(sourceDir, path.join(stageDir, 'kb', kb.slug));
+  }
+  await fsp.mkdir(path.join(stageDir, 'data'), { recursive: true });
+  const library = await buildLibrary(config);
+  await fsp.writeFile(
+    path.join(stageDir, 'data', 'library.json'),
+    JSON.stringify(library, null, 2),
+    'utf8',
+  );
+  return library;
+}
+
 function validateConfig(config) {
-  if (!config || typeof config !== 'object') throw new Error('kbs.json 不是有效对象。');
-  if (!Array.isArray(config.kbs) || config.kbs.length === 0) throw new Error('kbs.json 里没有知识库。');
+  if (!config || !Array.isArray(config.kbs)) throw new Error('kbs.json 缺少 kbs 数组。');
   const seen = new Set();
   for (const kb of config.kbs) {
     if (!kb.slug || !/^[a-z0-9][a-z0-9-]*$/.test(kb.slug)) {
-      throw new Error(`知识库 slug 无效：${escapeForLog(kb.slug)}（只能用小写字母、数字和连字符）。`);
+      throw new Error(`知识库 slug 无效：${kb.slug}`);
     }
     if (seen.has(kb.slug)) throw new Error(`知识库 slug 重复：${kb.slug}`);
     seen.add(kb.slug);
-    if (!kb.source || typeof kb.source !== 'string') {
-      throw new Error(`知识库 ${kb.slug} 缺少 source。`);
-    }
+    if (!kb.source) throw new Error(`知识库 ${kb.slug} 缺少 source。`);
     const sourceDir = path.resolve(root, kb.source);
     if (sourceDir !== root && !sourceDir.startsWith(root + path.sep)) {
-      throw new Error(`知识库 ${kb.slug} 的 source 必须在仓库目录内：${kb.source}`);
+      throw new Error(`知识库 ${kb.slug} 的 source 必须在仓库目录内。`);
+    }
+    if (kb.status !== 'planned' && !isDirectory(sourceDir)) {
+      throw new Error(`知识库 ${kb.slug} 的目录不存在：${kb.source}`);
     }
   }
 }
 
 export async function build() {
   const started = Date.now();
-  if (!isDirectory(siteDir)) throw new Error(`找不到站点源目录：${siteDir}`);
   const config = JSON.parse(await fsp.readFile(configPath, 'utf8'));
   validateConfig(config);
 
-  await fsp.rm(tmpDir, { recursive: true, force: true });
-  await fsp.mkdir(tmpDir, { recursive: true });
-  await copyTree(siteDir, tmpDir);
+  const soupault = await ensureSoupault();
+  const library = await stageSite(config);
 
-  const manifestKbs = [];
-  const searchPayloads = new Map();
-  let latestUpdated = '';
+  await fsp.rm(outDir, { recursive: true, force: true });
+  await fsp.mkdir(outDir, { recursive: true });
+  runSoupault(soupault);
+  runPagefind();
 
-  for (const [configIndex, raw] of config.kbs.entries()) {
-    const sourceDir = path.resolve(root, raw.source);
-    const sourceExists = isDirectory(sourceDir);
-    const sourceRelative = path.relative(root, sourceDir).split(path.sep).join('/');
-    const planned = raw.status === 'planned';
+  if (!fs.existsSync(path.join(outDir, 'index.html'))) throw new Error('Soupault 没有生成 index.html。');
+  if (!fs.existsSync(path.join(outDir, 'index.json'))) throw new Error('Soupault 没有生成 index.json。');
+  if (!fs.existsSync(path.join(outDir, 'pagefind', 'pagefind.js'))) throw new Error('Pagefind 没有生成 pagefind/pagefind.js。');
 
-    if (!sourceExists && !planned) {
-      throw new Error(`知识库 ${raw.slug} 的目录不存在：${raw.source}`);
-    }
-
-    let files = [];
-    if (sourceExists) {
-      files = (await fsp.readdir(sourceDir, { withFileTypes: true }))
-        .filter((entry) => entry.isFile() && /\.html?$/i.test(entry.name))
-        .map((entry) => entry.name)
-        .sort(pageSort);
-    }
-
-    const updatedAt = sourceExists
-      ? (lastGitDate(sourceRelative) || await newestMtime(sourceDir, files))
-      : null;
-
-    if (planned) {
-      manifestKbs.push({
-        slug: raw.slug,
-        title: raw.title || raw.slug,
-        subtitle: raw.subtitle ?? '内容筹备中',
-        description: raw.description || '',
-        tags: Array.isArray(raw.tags) ? raw.tags : [],
-        unit: raw.unit || '篇',
-        accent: raw.accent || '#3f6675',
-        order: Number.isFinite(raw.order) ? raw.order : 999,
-        status: 'planned',
-        updatedAt,
-        pageCount: 0,
-        chapterCount: 0,
-        charCount: 0,
-        pages: [],
-        searchHref: null,
-      });
-      continue;
-    }
-
-    if (!files.length) {
-      log(`  · ${raw.slug}：目录存在，但还没有 HTML 页面。`);
-      manifestKbs.push({
-        slug: raw.slug,
-        title: raw.title || raw.slug,
-        subtitle: raw.subtitle || '暂无页面',
-        description: raw.description || '',
-        tags: Array.isArray(raw.tags) ? raw.tags : [],
-        unit: raw.unit || '篇',
-        accent: raw.accent || '#a94f2a',
-        order: Number.isFinite(raw.order) ? raw.order : 999,
-        status: 'empty',
-        updatedAt,
-        pageCount: 0,
-        chapterCount: 0,
-        charCount: 0,
-        pages: [],
-        searchHref: null,
-      });
-      continue;
-    }
-
-    const kbDir = path.join(tmpDir, 'kb', raw.slug);
-    await copyTree(sourceDir, kbDir);
-
-    const pages = [];
-    const docs = [];
-    for (const file of files) {
-      const copiedFile = path.join(kbDir, file);
-      await preparePage(copiedFile);
-      const html = await fsp.readFile(copiedFile, 'utf8');
-      const extracted = extractPage(html, file, raw.slug);
-      pages.push(extracted.page);
-      docs.push(extracted.searchDoc);
-    }
-
-    // Give pages without a numeric filename prefix a stable two-digit label.
-    let nextCode = 1;
-    for (const page of pages) {
-      if (page.code) continue;
-      let candidate;
-      do {
-        candidate = String(nextCode++).padStart(2, '0');
-      } while (pages.some((other) => other.code === candidate));
-      page.code = candidate;
-    }
-
-    const chapterCount = pages.filter((page) => page.kind === 'doc').length;
-    const charCountTotal = pages.reduce((sum, page) => sum + page.chars, 0);
-    const searchHref = `data/search-${raw.slug}.json`;
-    searchPayloads.set(raw.slug, {
-      kb: raw.slug,
-      generatedAt: new Date().toISOString(),
-      docs,
-    });
-
-    manifestKbs.push({
-      slug: raw.slug,
-      title: raw.title || pages[0].shortTitle || raw.slug,
-      subtitle: raw.subtitle || '',
-      description: raw.description || '',
-      tags: Array.isArray(raw.tags) ? raw.tags : [],
-      unit: raw.unit || '篇',
-      accent: raw.accent || '#a94f2a',
-      order: Number.isFinite(raw.order) ? raw.order : 999,
-      status: 'active',
-      updatedAt,
-      pageCount: pages.length,
-      chapterCount,
-      charCount: charCountTotal,
-      pages,
-      searchHref,
-    });
-
-    if (updatedAt && updatedAt > latestUpdated) latestUpdated = updatedAt;
-    log(`  · ${raw.slug}：${pages.length} 页，${chapterCount} ${raw.unit || '篇'}，${charCountTotal} 字。`);
-  }
-
-  manifestKbs.sort((a, b) => (a.order - b.order) || a.slug.localeCompare(b.slug));
-
-  const manifest = {
-    site: {
-      ...config.site,
-      generatedAt: new Date().toISOString(),
-      latestUpdated: latestUpdated || null,
-    },
-    kbs: manifestKbs,
-  };
-
-  await fsp.mkdir(path.join(tmpDir, 'data'), { recursive: true });
-  await fsp.writeFile(
-    path.join(tmpDir, 'data', 'manifest.json'),
-    JSON.stringify(manifest, null, 2),
-    'utf8',
-  );
-
-  let searchBytes = 0;
-  for (const [slug, payload] of searchPayloads) {
-    const body = JSON.stringify(payload);
-    searchBytes += Buffer.byteLength(body);
-    await fsp.writeFile(path.join(tmpDir, 'data', `search-${slug}.json`), body, 'utf8');
-  }
+  const index = JSON.parse(await fsp.readFile(path.join(outDir, 'index.json'), 'utf8'));
+  const pages = index.filter((entry) => entry.kb);
 
   await fsp.rm(distDir, { recursive: true, force: true });
-  await fsp.rename(tmpDir, distDir);
+  await fsp.rename(outDir, distDir);
 
-  const active = manifestKbs.filter((kb) => kb.status === 'active');
-  const pageCount = active.reduce((sum, kb) => sum + kb.pageCount, 0);
   log('');
-  log(`书架构建完成：${active.length} 个知识库，${pageCount} 个页面，搜索索引 ${(searchBytes / 1024).toFixed(0)} KB。`);
+  log(`构建完成：${library.kbs.filter((kb) => kb.status !== 'planned').length} 个知识库，${pages.length} 个页面。`);
   log(`输出目录：${distDir}（${Date.now() - started} ms）`);
-  return manifest;
+  return { library, index };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

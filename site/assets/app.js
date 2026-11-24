@@ -64,21 +64,21 @@ const els = {
 let manifest = null;
 let current = { kb: null, page: null, anchor: null };
 let frameHref = null;
+let currentSections = [];
 let homeScrollY = 0;
 let toastTimer = 0;
 let activeOutlineKey = '';
 let scrollRaf = 0;
 let hadPage = false;
 
-const searchIndex = new Map();
-const searchPending = new Map();
-let searchLoading = false;
-let searchPromise = null;
-let searchErrorCount = 0;
+let pagefind = null;
+let pagefindPromise = null;
+let pagefindError = null;
 let searchQuery = '';
 let searchTimer = 0;
 let searchResults = [];
 let activeResult = -1;
+let searchRequest = 0;
 
 const boundDocs = new WeakSet();
 
@@ -127,10 +127,6 @@ function safeDecode(value) {
   } catch {
     return value;
   }
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function formatChars(value) {
@@ -214,9 +210,14 @@ async function init() {
   bindStaticEvents();
 
   try {
-    const response = await fetch('data/manifest.json', { cache: 'no-cache' });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    manifest = await response.json();
+    const [libraryResponse, indexResponse] = await Promise.all([
+      fetch('data/library.json', { cache: 'no-cache' }),
+      fetch('index.json', { cache: 'no-cache' }),
+    ]);
+    if (!libraryResponse.ok) throw new Error(`library.json HTTP ${libraryResponse.status}`);
+    if (!indexResponse.ok) throw new Error(`index.json HTTP ${indexResponse.status}`);
+    const [library, index] = await Promise.all([libraryResponse.json(), indexResponse.json()]);
+    manifest = buildManifest(library, index);
   } catch (error) {
     console.error('读取书架失败', error);
     renderBootError(error);
@@ -226,6 +227,69 @@ async function init() {
   setupSiteMeta();
   renderHome();
   route();
+}
+
+function pageCode(entry, kind, index) {
+  if (kind === 'overview') return '总';
+  const raw = String(entry.code ?? '').trim();
+  if (/^\d+$/.test(raw)) return raw.padStart(2, '0');
+  if (raw) return raw;
+  const match = String(entry.file || '').match(/^(\d+)/);
+  if (match) return match[1].padStart(2, '0');
+  return String(index + 1).padStart(2, '0');
+}
+
+function buildManifest(library, index) {
+  const entries = Array.isArray(index) ? index.filter((entry) => entry && entry.kb && entry.file) : [];
+  const kbs = (Array.isArray(library.kbs) ? library.kbs : []).map((raw) => {
+    const pages = entries
+      .filter((entry) => entry.kb === raw.slug)
+      .map((entry, entryIndex) => {
+        const file = String(entry.file);
+        const kind = entry.kind === 'overview' ? 'overview' : 'doc';
+        return {
+          id: String(entry.id || file.replace(/\.html?$/i, '')),
+          file,
+          href: `kb/${encodeURIComponent(raw.slug)}/${encodeURIComponent(file)}`,
+          title: String(entry.title || file),
+          shortTitle: String(entry.short || entry.title || file),
+          code: pageCode(entry, kind, entryIndex),
+          kind,
+          chars: Number(entry.chars) || 0,
+        };
+      });
+
+    pages.sort((a, b) => {
+      const aOverview = a.kind === 'overview';
+      const bOverview = b.kind === 'overview';
+      if (aOverview !== bOverview) return aOverview ? -1 : 1;
+      const aNumber = a.file.match(/^(\d+)/);
+      const bNumber = b.file.match(/^(\d+)/);
+      if (aNumber && bNumber) {
+        const diff = Number(aNumber[1]) - Number(bNumber[1]);
+        if (diff) return diff;
+      } else if (aNumber) {
+        return -1;
+      } else if (bNumber) {
+        return 1;
+      }
+      return a.file.localeCompare(b.file, 'zh-CN');
+    });
+
+    return {
+      ...raw,
+      status: pages.length ? 'active' : (raw.status || 'planned'),
+      pageCount: pages.length,
+      chapterCount: pages.filter((page) => page.kind === 'doc').length,
+      charCount: pages.reduce((sum, page) => sum + page.chars, 0),
+      pages,
+    };
+  });
+
+  return {
+    site: { ...(library.site || {}), title: library.site?.title || '知识库' },
+    kbs,
+  };
 }
 
 function detectPlatform() {
@@ -269,7 +333,7 @@ function renderBootError(error) {
       'div',
       { class: 'boot-error' },
       el('h3', {}, '书架读取失败'),
-      el('p', {}, '请检查 data/manifest.json 是否存在，或运行 npm run build 后再试。'),
+      el('p', {}, '请检查 data/library.json 和 index.json 是否存在，或运行 npm run build 后再试。'),
       el(
         'button',
         {
@@ -521,6 +585,7 @@ function showReader(kb, page, anchor) {
   const isNewPage = !current.page || current.kb?.slug !== kb.slug || current.page.id !== page.id;
 
   current = { kb, page, anchor: anchor || null };
+  if (isNewPage) currentSections = [];
   document.body.classList.add('reading');
   els.home.hidden = true;
   els.reader.hidden = false;
@@ -591,8 +656,18 @@ function renderChapterList(container, kb, activePage) {
   container.replaceChildren(...items);
 }
 
+function extractSections(doc) {
+  const sections = [];
+  for (const node of doc.querySelectorAll('main section.am-panel')) {
+    const titleNode = node.querySelector('h2');
+    const title = (titleNode?.textContent || '').replace(/\s+/g, ' ').trim();
+    if (node.id && title) sections.push({ id: node.id, title });
+  }
+  return sections;
+}
+
 function renderOutline(container, kb, page) {
-  const sections = page.sections || [];
+  const sections = currentSections;
   const items = sections.map((section) =>
     el(
       'li',
@@ -680,6 +755,10 @@ function handleFrameLoad() {
   syncFrameTheme();
   bindContentDoc(doc);
   els.loadBar.hidden = true;
+
+  currentSections = extractSections(doc);
+  renderOutline(els.outlineList, current.kb, current.page);
+  renderOutline(els.drawerOutline, current.kb, current.page);
 
   if (current.anchor) {
     scrollToAnchor(current.anchor);
@@ -807,7 +886,7 @@ function scrollToAnchor(anchor) {
 
 function updateOutlineActive(doc) {
   if (!doc || !current.page) return;
-  const sections = current.page.sections || [];
+  const sections = currentSections;
   let activeId = null;
   if (sections.length) {
     activeId = sections[0].id || null;
@@ -858,7 +937,13 @@ function openSearch() {
   renderSearchIdle();
   els.searchDialog.showModal();
   requestAnimationFrame(() => els.searchInput.focus());
-  ensureSearchIndexes();
+  ensurePagefind()
+    .then(() => {
+      if (els.searchDialog.open && !els.searchInput.value.trim()) renderSearchIdle();
+    })
+    .catch(() => {
+      if (els.searchDialog.open) renderSearchIdle();
+    });
 }
 
 function openSettings() {
@@ -892,75 +977,60 @@ function enableLightDismiss(dialog) {
    Search
    -------------------------------------------------------------------------- */
 
-async function ensureSearchIndexes() {
-  if (!manifest) return;
-  if (searchPromise) return searchPromise;
-  const kbs = manifest.kbs.filter((kb) => kb.status === 'active' && kb.searchHref);
-  if (!kbs.length) {
-    renderSearchIdle();
-    return;
-  }
-  if (kbs.every((kb) => searchIndex.has(kb.slug))) {
-    if (els.searchInput.value.trim()) runSearch(els.searchInput.value);
-    else renderSearchIdle();
-    return;
-  }
+function documentCount() {
+  return manifest
+    ? manifest.kbs.filter((kb) => kb.status === 'active').reduce((sum, kb) => sum + kb.pageCount, 0)
+    : 0;
+}
 
-  searchLoading = true;
-  searchErrorCount = 0;
+function pagefindModuleUrl() {
+  return new URL('pagefind/pagefind.js', document.baseURI).href;
+}
+
+async function ensurePagefind() {
+  if (pagefind) return pagefind;
+  if (pagefindPromise) return pagefindPromise;
+  if (pagefindError) throw pagefindError;
   if (els.searchDialog.open) {
     els.searchStatus.textContent = '正在读取全文索引…';
     if (!els.searchResults.childElementCount) {
       els.searchResults.replaceChildren(el('div', { class: 'search-empty' }, el('p', {}, '正在读取全文索引…')));
     }
   }
-
-  searchPromise = Promise.all(kbs.map((kb) => loadSearchIndex(kb))).finally(() => {
-    searchLoading = false;
-    searchPromise = null;
-  });
-  await searchPromise;
-
-  if (!els.searchDialog.open) return;
-  if (els.searchInput.value.trim()) runSearch(els.searchInput.value);
-  else renderSearchIdle();
-}
-
-function loadSearchIndex(kb) {
-  if (searchIndex.has(kb.slug)) return Promise.resolve(searchIndex.get(kb.slug));
-  if (searchPending.has(kb.slug)) return searchPending.get(kb.slug);
-
-  const promise = fetch(kb.searchHref, { cache: 'no-cache' })
-    .then((response) => {
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return response.json();
-    })
-    .then((data) => {
-      searchIndex.set(kb.slug, data);
-      return data;
+  pagefindPromise = import(pagefindModuleUrl())
+    .then((module) => {
+      pagefind = module;
+      return module;
     })
     .catch((error) => {
-      console.warn(`搜索索引读取失败：${kb.slug}`, error);
-      searchErrorCount += 1;
-      return null;
+      pagefindError = error;
+      console.error('Pagefind 加载失败', error);
+      throw error;
     })
     .finally(() => {
-      searchPending.delete(kb.slug);
+      pagefindPromise = null;
     });
-
-  searchPending.set(kb.slug, promise);
-  return promise;
+  return pagefindPromise;
 }
 
 function renderSearchIdle() {
-  if (searchLoading) {
+  if (pagefindError) {
+    els.searchStatus.textContent = '全文索引读取失败';
+    els.searchResults.replaceChildren(
+      el('div', { class: 'search-empty' }, el('p', {}, '全文索引加载失败，请刷新页面后重试。')),
+    );
+    return;
+  }
+  if (!pagefind) {
     els.searchStatus.textContent = '正在读取全文索引…';
-    els.searchResults.replaceChildren(el('div', { class: 'search-empty' }, el('p', {}, '正在读取全文索引…')));
+    els.searchResults.replaceChildren(
+      el('div', { class: 'search-empty' }, el('p', {}, '正在读取全文索引…')),
+    );
     return;
   }
 
   const active = manifest ? manifest.kbs.filter((kb) => kb.status === 'active') : [];
-  const docs = active.reduce((sum, kb) => sum + kb.pageCount, 0);
+  const docs = documentCount();
   if (!docs) {
     els.searchStatus.textContent = '书架里还没有可搜索的文档';
     els.searchResults.replaceChildren(
@@ -969,9 +1039,7 @@ function renderSearchIdle() {
     return;
   }
 
-  const errorNote = searchErrorCount ? `（${searchErrorCount} 个索引读取失败）` : '';
-  els.searchStatus.textContent = `全文检索 · ${docs} 篇文档${errorNote}`;
-
+  els.searchStatus.textContent = `全文检索 · ${docs} 篇文档`;
   const tags = [];
   for (const kb of active) {
     for (const tag of kb.tags || []) {
@@ -995,183 +1063,137 @@ function renderSearchIdle() {
   searchResults = [];
 }
 
-function runSearch(rawQuery) {
+function mapPagefindResult(rawUrl) {
+  let url;
+  try {
+    url = new URL(rawUrl, location.origin);
+  } catch {
+    return null;
+  }
+  const parts = url.pathname.split('/').filter(Boolean).map(safeDecode);
+  if (parts[0] !== 'kb' || !parts[1]) return null;
+  const slug = parts[1];
+  let file = parts[2] || 'index.html';
+  if (url.pathname.endsWith('/') || !file) file = 'index.html';
+  if (!/\.[a-z0-9]+$/i.test(file)) file += '.html';
+  const anchor = url.hash ? safeDecode(url.hash.slice(1)) : '';
+  const kb = manifest.kbs.find((candidate) => candidate.slug === slug);
+  if (!kb) return null;
+  const page = kb.pages.find(
+    (candidate) =>
+      candidate.file.toLowerCase() === file.toLowerCase() ||
+      candidate.id === file.replace(/\.html?$/i, ''),
+  );
+  if (!page) return null;
+  return { kb, page, anchor };
+}
+
+async function runSearch(rawQuery) {
   const query = String(rawQuery || '').trim();
   searchQuery = query;
-
   if (!query) {
     renderSearchIdle();
     return;
   }
-  if (searchLoading) {
-    els.searchStatus.textContent = '正在读取全文索引…';
-    els.searchResults.replaceChildren(el('div', { class: 'search-empty' }, el('p', {}, '正在读取全文索引…')));
-    return;
-  }
-
-  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-  if (!terms.length) {
-    renderSearchIdle();
-    return;
-  }
-
-  const found = [];
-  const kbs = manifest ? manifest.kbs.filter((kb) => kb.status === 'active') : [];
-  for (const kb of kbs) {
-    const data = searchIndex.get(kb.slug);
-    if (!data || !Array.isArray(data.docs)) continue;
-    for (const doc of data.docs) {
-      const page = kb.pages.find((candidate) => candidate.id === doc.pageId);
-      if (!page) continue;
-      const pageOrder = kb.pages.indexOf(page);
-      const pageTitleLower = String(doc.pageTitle || '').toLowerCase();
-      for (const [sectionOrder, section] of (doc.sections || []).entries()) {
-        const heading = String(section.heading || '');
-        const text = String(section.text || '');
-        const headingLower = heading.toLowerCase();
-        const textLower = text.toLowerCase();
-        const haystack = `${headingLower} ${textLower}`;
-        if (!terms.every((term) => haystack.includes(term))) continue;
-
-        let score = 0;
-        for (const term of terms) {
-          if (headingLower.includes(term)) score += 30;
-          if (pageTitleLower.includes(term)) score += 55;
-          score += Math.min(countOccurrences(textLower, term), 8) * 3;
-        }
-        if (query.length > 1 && headingLower.includes(query.toLowerCase())) score += 40;
-
-        found.push({
-          kb,
-          doc,
-          page,
-          pageOrder,
-          section,
-          sectionOrder,
-          score,
-        });
-      }
+  if (!pagefind) {
+    try {
+      await ensurePagefind();
+    } catch {
+      if (els.searchDialog.open) renderSearchIdle();
+      return;
     }
   }
+  if (!els.searchDialog.open) return;
 
-  found.sort(
-    (a, b) =>
-      b.score - a.score ||
-      (a.kb.order || 0) - (b.kb.order || 0) ||
-      a.pageOrder - b.pageOrder ||
-      a.sectionOrder - b.sectionOrder,
-  );
-
-  renderSearchResults(found, query, terms);
-}
-
-function countOccurrences(haystack, needle) {
-  if (!needle) return 0;
-  let index = 0;
-  let count = 0;
-  while ((index = haystack.indexOf(needle, index)) !== -1) {
-    count += 1;
-    index += needle.length;
+  const request = ++searchRequest;
+  els.searchStatus.textContent = `正在搜索「${query}」…`;
+  try {
+    const search = await pagefind.search(query);
+    if (request !== searchRequest || !els.searchDialog.open) return;
+    const results = [];
+    for (const item of search.results || []) {
+      if (results.length >= 60) break;
+      let data;
+      try {
+        data = await item.data();
+      } catch {
+        continue;
+      }
+      const mapped = mapPagefindResult(data.url);
+      if (!mapped) continue;
+      results.push({
+        kb: mapped.kb,
+        page: mapped.page,
+        href: hrefFor(mapped.kb, mapped.page, mapped.anchor),
+        excerpt: data.excerpt || '',
+      });
+    }
+    if (request !== searchRequest || !els.searchDialog.open) return;
+    renderSearchResults(results, query);
+  } catch (error) {
+    if (request !== searchRequest) return;
+    console.error('搜索失败', error);
+    els.searchStatus.textContent = '搜索失败，请稍后重试';
+    els.searchResults.replaceChildren(
+      el('div', { class: 'search-empty' }, el('p', {}, '搜索暂时不可用，请刷新页面后重试。')),
+    );
+    searchResults = [];
+    activeResult = -1;
+    els.searchInput.removeAttribute('aria-activedescendant');
   }
-  return count;
 }
 
-function renderSearchResults(found, query, terms) {
-  searchResults = found.slice(0, 60);
+function renderSearchResults(results, query) {
+  searchResults = results;
   activeResult = -1;
   els.searchInput.removeAttribute('aria-activedescendant');
   els.searchResults.replaceChildren();
 
-  if (!found.length) {
+  if (!results.length) {
     els.searchStatus.textContent = `没有找到「${query}」`;
-    const empty = el(
-      'div',
-      { class: 'search-empty' },
-      el('p', {}, '没有找到相关内容。'),
-      el('p', {}, '试试更短的关键词，或换一个术语。'),
+    els.searchResults.replaceChildren(
+      el(
+        'div',
+        { class: 'search-empty' },
+        el('p', {}, '没有找到相关内容。'),
+        el('p', {}, '试试更短的关键词，或换一个术语。'),
+      ),
     );
-    els.searchResults.replaceChildren(empty);
     return;
   }
 
-  els.searchStatus.textContent =
-    found.length > 60 ? `找到 ${found.length} 条结果，显示前 60 条` : `找到 ${found.length} 条结果`;
-
+  els.searchStatus.textContent = `找到 ${results.length} 条结果`;
   const fragment = document.createDocumentFragment();
-  searchResults.forEach((result, index) => {
-    const pageLabel = result.page.kind === 'overview'
-      ? '总览'
-      : `${result.page.code ? `${result.page.code} · ` : ''}${result.page.shortTitle}`;
-    const heading = result.section.heading || result.doc.pageTitle || '正文';
-    const snippet = makeSnippet(result.section.text || '', terms);
-
+  results.forEach((result, index) => {
+    const page = result.page;
+    const pageLabel = page.kind === 'overview' ? '总览' : page.shortTitle;
     const meta = el('div', { class: 'search-result-meta' });
     meta.append(el('span', { class: 'sr-kb' }, result.kb.title));
-    meta.append(el('span', {}, pageLabel));
-
-    const title = el('div', { class: 'search-result-title' });
-    fillHighlighted(title, heading, terms);
-
-    const snippetNode = el('div', { class: 'search-result-snippet' });
-    if (snippet) fillHighlighted(snippetNode, snippet, terms);
-    else snippetNode.textContent = '打开这一节查看内容。';
+    meta.append(el('span', {}, page.kind === 'overview' ? '总览' : page.code || ''));
+    const title = el('div', { class: 'search-result-title' }, pageLabel);
+    const snippet = el('div', { class: 'search-result-snippet' });
+    if (result.excerpt) snippet.innerHTML = result.excerpt;
+    else snippet.textContent = page.title;
 
     const link = el(
       'a',
       {
         class: 'search-result',
-        href: hrefFor(result.kb, result.page, result.section.id),
+        href: result.href,
         role: 'option',
         id: `search-option-${index}`,
         tabindex: '-1',
+        title: page.title,
         'aria-selected': 'false',
         dataset: { result: String(index) },
       },
       meta,
       title,
-      snippetNode,
+      snippet,
     );
     fragment.append(link);
   });
   els.searchResults.append(fragment);
-}
-
-function makeSnippet(text, terms) {
-  if (!text) return '';
-  const lower = text.toLowerCase();
-  let index = -1;
-  for (const term of terms) {
-    const at = lower.indexOf(term);
-    if (at >= 0 && (index < 0 || at < index)) index = at;
-  }
-  if (index < 0) index = 0;
-  const start = Math.max(0, index - 54);
-  const end = Math.min(text.length, index + 148);
-  return `${start > 0 ? '…' : ''}${text.slice(start, end).trim()}${end < text.length ? '…' : ''}`;
-}
-
-function fillHighlighted(node, text, terms) {
-  node.textContent = '';
-  if (!terms.length) {
-    node.textContent = text;
-    return;
-  }
-  let pattern;
-  try {
-    pattern = new RegExp(`(${terms.map(escapeRegExp).join('|')})`, 'gi');
-  } catch {
-    node.textContent = text;
-    return;
-  }
-  let last = 0;
-  for (const match of text.matchAll(pattern)) {
-    if (match.index > last) node.append(text.slice(last, match.index));
-    const mark = document.createElement('mark');
-    mark.textContent = match[0];
-    node.append(mark);
-    last = match.index + match[0].length;
-  }
-  if (last < text.length) node.append(text.slice(last));
 }
 
 function setActiveResult(index) {
@@ -1197,10 +1219,9 @@ function setActiveResult(index) {
 function activateResult(index) {
   const result = searchResults[index];
   if (!result) return;
-  const href = hrefFor(result.kb, result.page, result.section.id);
   els.searchDialog.close();
-  if (location.hash === href) route();
-  else location.hash = href;
+  if (location.hash === result.href) route();
+  else location.hash = result.href;
 }
 
 /* --------------------------------------------------------------------------
@@ -1214,7 +1235,7 @@ function bindStaticEvents() {
   els.menuBtn.addEventListener('click', openDrawer);
 
   for (const trigger of [els.searchBtn, els.heroSearch]) {
-    trigger.addEventListener('pointerenter', () => ensureSearchIndexes(), { once: true });
+    trigger.addEventListener('pointerenter', () => ensurePagefind().catch(() => {}), { once: true });
   }
 
   for (const button of $$('[data-close]')) {

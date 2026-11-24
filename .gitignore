@@ -1,6 +1,9 @@
 node_modules/
 dist/
-.dist-tmp/
+.build-src/
+.build-out/
+.soupault-cache/
+.tools/
 .wrangler/
 .claude/
 .DS_Store

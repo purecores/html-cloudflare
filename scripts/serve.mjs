@@ -10,6 +10,8 @@ const root = path.resolve(__dirname, '..');
 const distDir = path.join(root, 'dist');
 const siteDir = path.join(root, 'site');
 const configPath = path.join(root, 'kbs.json');
+const soupaultDir = path.join(root, 'soupault');
+const soupaultConfigPath = path.join(root, 'soupault.toml');
 const port = Number(process.env.PORT || 4173);
 
 const MIME = new Map(Object.entries({
@@ -103,7 +105,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(port, '127.0.0.1', () => {
   console.log('');
   console.log(`本地预览：http://localhost:${port}`);
-  console.log('改动 site/ 或知识库目录会自动重新构建。');
+  console.log('改动 site/、soupault/ 或知识库目录会自动重新构建。');
 });
 
 const watched = new Map();
@@ -135,12 +137,19 @@ function watchSettings() {
   };
 
   watchDir(siteDir);
+  watchDir(soupaultDir);
+  try {
+    fs.watch(soupaultConfigPath, triggerRebuild);
+  } catch {
+    // The build reports a missing Soupault config.
+  }
   const configTimer = { id: null };
   fs.watch(configPath, () => {
     clearTimeout(configTimer.id);
     configTimer.id = setTimeout(async () => {
       await loadConfig();
       watchDir(siteDir);
+      watchDir(soupaultDir);
       for (const kb of Array.isArray(config?.kbs) ? config.kbs : []) {
         if (kb?.source) watchDir(path.resolve(root, kb.source));
       }

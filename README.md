@@ -1,6 +1,6 @@
 # 知识库 · HTML 阅读器
 
-把 HTML 知识页整理成一个可以按卷阅读、全文检索的书架。站点是纯静态的，部署在 Cloudflare Workers 上，适配电脑和手机。
+把 HTML 知识页整理成一个可以按卷阅读、全文检索的书架。站点由 Soupault 生成静态页面，Pagefind 提供全文检索，部署在 Cloudflare Workers 上，适配电脑和手机。
 
 当前收录：
 
@@ -17,7 +17,9 @@ npm install
 npm run dev
 ```
 
-打开 `http://localhost:4173`。改动 `site/`、`kbs.json` 或知识库目录后，本地服务会自动重新构建，刷新浏览器即可。
+打开 `http://localhost:4173`。改动 `site/`、`soupault.toml`、`soupault/`、`kbs.json` 或知识库目录后，本地服务会自动重新构建，刷新浏览器即可。
+
+第一次构建会自动下载对应平台的 Soupault 5.3.0 二进制（缓存在 `.tools/`），Pagefind 由 npm 安装。
 
 只想生成静态文件：
 
@@ -25,25 +27,32 @@ npm run dev
 npm run build
 ```
 
-构建结果在 `dist/`，它同时包含阅读器界面、知识库 HTML 和生成的搜索索引。
+构建结果在 `dist/`，它同时包含阅读器界面、知识库 HTML、Soupault 生成的 `index.json` 和 Pagefind 搜索索引。`Pagefind` 输出在 `dist/pagefind/`。
 
 ## 目录结构
 
 ```text
 .
-├─ site/                 阅读器界面（HTML / CSS / JS / 图标）
+├─ site/                 阅读器外壳（HTML / CSS / JS / 图标）
 │  ├─ index.html
 │  ├─ 404.html
 │  └─ assets/
+├─ soupault.toml          Soupault 配置
+├─ soupault/
+│  ├─ plugins/post-index.lua   页面处理与元数据导出
+│  └─ templates/main.html      Soupault 基础模板
 ├─ scripts/
-│  ├─ build.mjs          扫描知识库、生成清单与全文索引、输出 dist/
+│  ├─ build.mjs          暂存内容 → Soupault → Pagefind → dist/
 │  └─ serve.mjs          本地预览 + 自动重建
 ├─ Motor-One/            知识库一：HTML 页面 + src/ 源稿
 ├─ HQ-One/               知识库二：BHS HQ 横切机电气订单处理
 ├─ EPLAN-KB/             知识库三：HQ 横切机 EPLAN 绘图
 ├─ kbs.json              知识库清单（标题、简介、顺序、状态）
 ├─ wrangler.jsonc        Cloudflare Workers 静态资源配置
-└─ dist/                 构建产物（不提交到 Git）
+├─ .build-src/           构建暂存目录（不提交）
+├─ .build-out/           Soupault / Pagefind 输出（不提交）
+├─ .tools/               自动下载的 Soupault 二进制（不提交）
+└─ dist/                 最终产物（不提交到 Git）
 ```
 
 `kbs.json` 顶部的 `site.title`、`site.description`、`site.repo` 分别控制站点名称、简介和 GitHub 链接。
@@ -111,6 +120,7 @@ npm run build
    - **Deploy command**：`npx wrangler deploy`
    - **Root directory**：`/`（默认）
    - Worker 名称必须和 `wrangler.jsonc` 里的 `name` 一致：`html-cloudflare`
+   - 构建第一步会自动下载 Linux x86_64 的 Soupault 5.3.0；构建环境需要能访问 GitHub Releases。
 
 4. 首次部署完成后，到该 Worker 的 **Settings → Domains & Routes → Add → Custom domain**，填入你托管在 Cloudflare 的域名或子域名（例如 `kb.example.com`）。Cloudflare 会自动创建 DNS 记录和证书。
 
@@ -123,13 +133,15 @@ npm run deploy
 
 ## 实现说明
 
-- **阅读器外壳**：书架、目录、搜索和界面主题由 `site/` 提供；每篇知识页放在同源的 `iframe` 里，所以原页面的排版、MathML、表格和打印样式都保持不变。
-- **全文索引**：`scripts/build.mjs` 在构建时解析每页的 `section.am-panel`，把章节标题和正文写入 `dist/data/search-*.json`。搜索只读取本地 JSON，不依赖外部服务。
+- **静态生成**：`scripts/build.mjs` 把 `site/` 和知识库目录暂存到 `.build-src`，运行 Soupault（`soupault.toml` + `soupault/plugins/post-index.lua`），再运行 Pagefind，输出到 `dist/`。
+- **页面元数据**：Soupault 的 `post-index` hook 生成 `dist/index.json`，包含每页的 `kb / file / id / kind / code / short / chars`；`data/library.json` 提供知识库清单和更新日期。阅读器只读取这两个 JSON。
+- **全文检索**：Pagefind 索引带 `data-pagefind-body` 的知识页；阅读器用 Pagefind JS API 搜索。搜索结果由 Pagefind 给出并高亮，作者工具栏、目录和原始 Markdown 不进入索引。
 - **主题工具栏**：知识页保留原来的主题、明暗和字号工具栏；界面主题会同步正文的明暗，正文的主题、明暗和字号也可在每页顶部继续调整。回复、标注、复制源稿和导出等作者工具会隐藏。
 - **链接**：知识页之间的相对链接会被阅读器接管，更新侧边栏和网址；外部链接在新标签页打开；没有随知识库发布的页面会提示“这一页没有随知识库一起发布”。
-- **安全头**：`site/_headers` 设置 `X-Frame-Options: SAMEORIGIN` 等响应头；阅读器页面自身还有 CSP。知识页保留它们原有的 CSP。
+- **安全头**：`site/_headers` 设置 `X-Frame-Options: SAMEORIGIN` 等响应头；阅读器页面自身还有 CSP。Pagefind 的 WASM 需要 `'wasm-unsafe-eval'`。知识页保留它们原有的 CSP。
 - **源稿**：构建只发布 HTML 和旁边的资源；`src/`、`drafts/` 目录不会复制到 `dist/`。`training/` 里的 PDF、CSV、Markdown 会作为下载资料一起发布。
 - **原图路径**：HQ-One 的 `data-am-src` 原图路径在构建时归一到知识库目录内，并把页面的 `img-src` 放宽到同源，让原图/灯箱可用。
+- **Soupault 二进制**：首次构建按平台下载 Soupault 5.3.0 并校验 sha256，缓存到 `.tools/`，也可以用 `SOUPAULT_BIN` 指定已有二进制。
 
 ## 常用命令
 
@@ -147,4 +159,4 @@ npm run deploy   # 构建并部署到 Cloudflare
 npm run build
 ```
 
-搜索索引会在构建时重新生成，不需要手动维护。
+Soupault 的 `index.json` 元数据和 Pagefind 搜索索引会在构建时重新生成，不需要手动维护。

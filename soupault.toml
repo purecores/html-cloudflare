@@ -1,0 +1,16 @@
+[settings]
+site_dir = ".build-src"
+build_dir = ".build-out"
+default_template_file = "soupault/templates/main.html"
+clean_urls = false
+pretty_print_html = false
+
+[index]
+dump_json = ".build-out/index.json"
+force_indexing_path_regex = "kb.*index[.]html$"
+
+[index.fields.title]
+selector = ["main h1", "h1"]
+
+[hooks.post-index]
+file = "soupault/plugins/post-index.lua"
