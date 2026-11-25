@@ -4,6 +4,7 @@ dist/
 .build-out/
 .soupault-cache/
 .tools/
+_*-backup/
 .wrangler/
 .claude/
 .DS_Store

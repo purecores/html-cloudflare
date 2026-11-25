@@ -27,11 +27,17 @@
   <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M20 12H5M11 6l-6 6 6 6"/></symbol>
   <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="M15 5 8 12l7 7"/></symbol>
   <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m5 9 7 7 7-7"/></symbol>
+  <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M9.5 4.5v15"/></symbol>
 </svg>
 
 <header class="topbar">
   <button id="menu-btn" class="icon-btn menu-btn" type="button" aria-label="打开章节目录" aria-controls="drawer" aria-expanded="false" hidden>
     <svg class="icon" aria-hidden="true"><use href="#i-menu"></use></svg>
+  </button>
+
+  <button id="sidebar-btn" class="icon-btn sidebar-btn" type="button" aria-label="隐藏左侧目录" title="隐藏左侧目录">
+    <svg class="icon" aria-hidden="true"><use href="#i-sidebar"></use></svg>
   </button>
 
   <a class="brand" href="#/" aria-label="知识库首页">
@@ -66,6 +72,10 @@
     <a id="repo-link" class="repo-link" href="https://github.com/purecores/html-cloudflare" target="_blank" rel="noopener">GitHub</a>
   </div>
 </header>
+
+<button id="chrome-restore" class="chrome-restore" type="button" aria-label="显示顶部栏" title="显示顶部栏" hidden>
+  <svg class="icon" aria-hidden="true"><use href="#i-chevron-down"></use></svg>
+</button>
 
 <noscript>
   <p class="noscript">这个阅读器需要 JavaScript。你也可以直接打开 <a href="kb/motor-one/index.html">电机知识库总览</a>。</p>
@@ -259,6 +269,15 @@
       </div>
     </fieldset>
     <p class="settings-note">界面主题也会同步正文的明暗；正文的主题、明暗和字号也可在每页顶部的工具栏继续调整。设置只保存在这台设备上。</p>
+    <fieldset>
+      <legend>阅读界面</legend>
+      <div class="settings-toggles">
+        <label><input type="checkbox" data-chrome="sidebar" checked><span>显示左侧目录</span></label>
+        <label><input type="checkbox" data-chrome="topbar" checked><span>显示顶部栏</span></label>
+        <label><input type="checkbox" data-chrome="bottom" checked><span>显示底部信息</span></label>
+      </div>
+      <p class="settings-note">隐藏顶部栏后，页面右上角会保留一个恢复按钮。</p>
+    </fieldset>
     <div class="settings-links">
       <a id="settings-raw" class="text-link" href="#" target="_blank" rel="noopener" hidden>打开当前页面原文件</a>
       <a id="settings-repo" class="text-link" href="https://github.com/purecores/html-cloudflare" target="_blank" rel="noopener">GitHub 仓库</a>

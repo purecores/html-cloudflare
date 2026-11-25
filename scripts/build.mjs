@@ -33,7 +33,10 @@ async function copyTree(from, to) {
   const entries = await fsp.readdir(from, { withFileTypes: true });
   for (const entry of entries) {
     if (entry.name === 'node_modules' || entry.name === '.git') continue;
-    if (entry.isDirectory() && ['src', 'drafts'].includes(entry.name.toLowerCase())) continue;
+    if (entry.isDirectory()) {
+      const name = entry.name.toLowerCase();
+      if (['src', 'drafts'].includes(name) || entry.name.startsWith('_') || name.includes('backup')) continue;
+    }
     if (entry.isFile() && /^(\.DS_Store|Thumbs\.db)$/i.test(entry.name)) continue;
     const source = path.join(from, entry.name);
     const target = path.join(to, entry.name);

@@ -321,6 +321,10 @@ kbd {
   display: none;
 }
 
+.sidebar-btn {
+  display: none;
+}
+
 .search-btn {
   height: 38px;
   min-width: 210px;
@@ -1307,6 +1311,67 @@ body.reading .site-foot {
 }
 
 /* --------------------------------------------------------------------------
+   Hideable chrome
+   -------------------------------------------------------------------------- */
+
+:root.chrome-no-topbar .topbar {
+  display: none;
+}
+
+:root.chrome-no-bottom .page-nav,
+:root.chrome-no-bottom .site-foot {
+  display: none;
+}
+
+:root.chrome-no-sidebar .reader {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+:root.chrome-no-sidebar .sidebar {
+  display: none;
+}
+
+@media (min-width: 921px) {
+  body.reading .sidebar-btn {
+    display: inline-flex;
+  }
+}
+
+.chrome-restore {
+  position: fixed;
+  top: calc(8px + env(safe-area-inset-top));
+  right: 10px;
+  z-index: 40;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-3);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.12);
+  opacity: 0.55;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.chrome-restore:hover,
+.chrome-restore:focus-visible {
+  opacity: 1;
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+/* On narrow screens the page's own theme toolbar sits along the top edge,
+   so keep the restore control just below it. */
+@media (max-width: 920px) {
+  .chrome-restore {
+    top: calc(58px + env(safe-area-inset-top));
+  }
+}
+
+/* --------------------------------------------------------------------------
    Dialogs
    -------------------------------------------------------------------------- */
 
@@ -1522,6 +1587,10 @@ dialog::backdrop {
   inset: 0;
   width: min(92vw, 440px);
   margin: 12vh auto auto;
+  max-height: 86vh;
+  max-height: 86dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border-radius: var(--radius);
   box-shadow: 0 30px 90px rgba(0, 0, 0, 0.28);
 }
@@ -1614,6 +1683,41 @@ legend {
 .segmented input:focus-visible + span {
   outline: 2px solid var(--focus);
   outline-offset: -2px;
+}
+
+.settings-toggles {
+  display: grid;
+  border: 1px solid var(--line);
+}
+
+.settings-toggles label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.settings-toggles label + label {
+  border-top: 1px solid var(--line);
+}
+
+.settings-toggles label:hover {
+  background: var(--surface-2);
+}
+
+.settings-toggles input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  flex: none;
+  accent-color: var(--copper);
+}
+
+.settings-toggles span {
+  color: var(--ink-2);
+  font-size: 0.78rem;
 }
 
 .settings-note {

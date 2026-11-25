@@ -6,6 +6,7 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 
 const THEME_KEY = 'kb-theme';
+const CHROME_KEY = 'kb-chrome';
 const LAST_KEY = 'kb-last';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -14,6 +15,8 @@ const wideLayout = window.matchMedia('(min-width: 921px)');
 const els = {
   topbar: $('.topbar'),
   menuBtn: $('#menu-btn'),
+  sidebarBtn: $('#sidebar-btn'),
+  chromeRestore: $('#chrome-restore'),
   crumb: $('#crumb'),
   crumbKb: $('#crumb-kb'),
   crumbPage: $('#crumb-page'),
@@ -201,12 +204,60 @@ function syncFrameTheme() {
 }
 
 /* --------------------------------------------------------------------------
+   Hideable chrome
+   -------------------------------------------------------------------------- */
+
+function readChrome() {
+  let stored = {};
+  try {
+    stored = JSON.parse(localStorage.getItem(CHROME_KEY) || '{}') || {};
+  } catch {
+    stored = {};
+  }
+  return {
+    sidebar: stored.sidebar !== false,
+    topbar: stored.topbar !== false,
+    bottom: stored.bottom !== false,
+  };
+}
+
+function applyChrome(prefs, { persist = true } = {}) {
+  const root = document.documentElement;
+  root.classList.toggle('chrome-no-sidebar', prefs.sidebar === false);
+  root.classList.toggle('chrome-no-topbar', prefs.topbar === false);
+  root.classList.toggle('chrome-no-bottom', prefs.bottom === false);
+  if (els.chromeRestore) els.chromeRestore.hidden = prefs.topbar !== false;
+  if (els.sidebarBtn) {
+    const label = prefs.sidebar === false ? '显示左侧目录' : '隐藏左侧目录';
+    els.sidebarBtn.setAttribute('aria-label', label);
+    els.sidebarBtn.title = label;
+  }
+  for (const box of $$('input[data-chrome]', els.settingsDialog)) {
+    box.checked = prefs[box.dataset.chrome] !== false;
+  }
+  if (persist) {
+    try {
+      localStorage.setItem(CHROME_KEY, JSON.stringify(prefs));
+    } catch {
+      // The selection still applies for this page.
+    }
+  }
+}
+
+function toggleChrome(key) {
+  const prefs = readChrome();
+  prefs[key] = prefs[key] === false;
+  applyChrome(prefs);
+}
+
+/* --------------------------------------------------------------------------
    Boot
    -------------------------------------------------------------------------- */
 
 async function init() {
   detectPlatform();
   applyTheme(readTheme(), { persist: false });
+  applyChrome(readChrome(), { persist: false });
   bindStaticEvents();
 
   try {
@@ -951,6 +1002,7 @@ function openSettings() {
     for (const radio of $$('input[name="theme"]', els.settingsDialog)) {
       radio.checked = radio.value === readTheme();
     }
+    applyChrome(readChrome(), { persist: false });
     syncSettingsRawLink();
     els.settingsDialog.showModal();
   }
@@ -1234,6 +1286,14 @@ function bindStaticEvents() {
   els.settingsBtn.addEventListener('click', openSettings);
   els.menuBtn.addEventListener('click', openDrawer);
 
+  els.sidebarBtn?.addEventListener('click', () => toggleChrome('sidebar'));
+  els.chromeRestore?.addEventListener('click', () => {
+    const prefs = readChrome();
+    prefs.topbar = true;
+    applyChrome(prefs);
+    els.settingsBtn.focus({ preventScroll: true });
+  });
+
   for (const trigger of [els.searchBtn, els.heroSearch]) {
     trigger.addEventListener('pointerenter', () => ensurePagefind().catch(() => {}), { once: true });
   }
@@ -1258,7 +1318,13 @@ function bindStaticEvents() {
   });
 
   els.settingsDialog.addEventListener('change', (event) => {
-    if (event.target.name === 'theme') applyTheme(event.target.value);
+    if (event.target.name === 'theme') {
+      applyTheme(event.target.value);
+    } else if (event.target.dataset.chrome) {
+      const prefs = readChrome();
+      prefs[event.target.dataset.chrome] = event.target.checked;
+      applyChrome(prefs);
+    }
   });
 
   els.searchInput.addEventListener('input', () => {
@@ -1313,6 +1379,7 @@ function bindStaticEvents() {
 
   window.addEventListener('storage', (event) => {
     if (event.key === THEME_KEY) applyTheme(readTheme(), { persist: false });
+    else if (event.key === CHROME_KEY) applyChrome(readChrome(), { persist: false });
   });
 
   wideLayout.addEventListener('change', (event) => {

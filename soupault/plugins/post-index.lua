@@ -9,6 +9,35 @@ if not Regex.match(url, "^/kb/") then
   return
 end
 
+-- Knowledge pages default to the paper theme. Pages that name another theme
+-- explicitly keep it; the page toolbar can still switch themes at runtime.
+local root = HTML.select_one(page, "html")
+if root then
+  local theme = HTML.get_attribute(root, "data-theme")
+  if not theme or theme == "" or theme == "blueprint" then
+    HTML.set_attribute(root, "data-theme", "paper")
+    local carrier = HTML.select_one(page, ".am-toolbar")
+    if carrier then
+      HTML.set_attribute(carrier, "data-am-root-theme", "paper")
+    end
+    local theme_select = HTML.select_one(page, 'select[data-am="theme"]')
+    if theme_select then
+      local options = HTML.select(theme_select, "option")
+      if options then
+        local i = 1
+        while options[i] do
+          if HTML.get_attribute(options[i], "value") == "paper" then
+            HTML.set_attribute(options[i], "selected", "")
+          else
+            HTML.delete_attribute(options[i], "selected")
+          end
+          i = i + 1
+        end
+      end
+    end
+  end
+end
+
 local title = fields["title"] or ""
 local base = Sys.basename(src)
 local slug = Sys.basename(Sys.dirname(src))

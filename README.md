@@ -6,7 +6,7 @@
 
 - **电机知识库**（`Motor-One/`）：7 卷 + 总览
 - **BHS HQ 横切机**（`HQ-One/`）：电气订单处理，45 篇 + 总览
-- **EPLAN 绘图知识库**（`EPLAN-KB/`）：HQ 横切机 AZARIA 案例，18 篇 + 总览
+- **EPLAN 绘图知识库**（`EPLAN-KB/`）：HQ 横切机 AZARIA 案例，22 篇 + 总览
 
 ## 本地运行
 
@@ -136,10 +136,11 @@ npm run deploy
 - **静态生成**：`scripts/build.mjs` 把 `site/` 和知识库目录暂存到 `.build-src`，运行 Soupault（`soupault.toml` + `soupault/plugins/post-index.lua`），再运行 Pagefind，输出到 `dist/`。
 - **页面元数据**：Soupault 的 `post-index` hook 生成 `dist/index.json`，包含每页的 `kb / file / id / kind / code / short / chars`；`data/library.json` 提供知识库清单和更新日期。阅读器只读取这两个 JSON。
 - **全文检索**：Pagefind 索引带 `data-pagefind-body` 的知识页；阅读器用 Pagefind JS API 搜索。搜索结果由 Pagefind 给出并高亮，作者工具栏、目录和原始 Markdown 不进入索引。
-- **主题工具栏**：知识页保留原来的主题、明暗和字号工具栏；界面主题会同步正文的明暗，正文的主题、明暗和字号也可在每页顶部继续调整。回复、标注、复制源稿和导出等作者工具会隐藏。
+- **阅读界面**：左侧目录可在顶栏一键收起，顶部栏和底部信息也可在「阅读设置」里隐藏，选择保存在本机；隐藏顶部栏后，右上角会保留一个恢复按钮。
+- **主题工具栏**：知识页默认使用纸张主题，仍可在每页顶部的工具栏切换图纸、卡片或纸张；界面主题会同步正文的明暗，正文的明暗和字号也可继续调整。回复、标注、复制源稿和导出等作者工具会隐藏。
 - **链接**：知识页之间的相对链接会被阅读器接管，更新侧边栏和网址；外部链接在新标签页打开；没有随知识库发布的页面会提示“这一页没有随知识库一起发布”。
 - **安全头**：`site/_headers` 设置 `X-Frame-Options: SAMEORIGIN` 等响应头；阅读器页面自身还有 CSP。Pagefind 的 WASM 需要 `'wasm-unsafe-eval'`。知识页保留它们原有的 CSP。
-- **源稿**：构建只发布 HTML 和旁边的资源；`src/`、`drafts/` 目录不会复制到 `dist/`。`training/` 里的 PDF、CSV、Markdown 会作为下载资料一起发布。
+- **源稿**：构建只发布 HTML 和旁边的资源；`src/`、`drafts/` 和 `_*-backup/` 等以下划线开头或带 backup 的目录不会复制到 `dist/`。`training/` 里的 PDF、CSV、Markdown 会作为下载资料一起发布。
 - **原图路径**：HQ-One 的 `data-am-src` 原图路径在构建时归一到知识库目录内，并把页面的 `img-src` 放宽到同源，让原图/灯箱可用。
 - **Soupault 二进制**：首次构建按平台下载 Soupault 5.3.0 并校验 sha256，缓存到 `.tools/`，也可以用 `SOUPAULT_BIN` 指定已有二进制。
 
